@@ -1,5 +1,6 @@
 use std::collections::HashMap;
 use serde::{Serialize, Deserialize};
+use serde_with::{serde_as, TryFromInto};
 
 // {
 //   "name": "postgresql@14",
@@ -206,36 +207,17 @@ pub enum FromMacOS {
 
 /// {"reason":":versioned_formula","explanation":""}
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
 pub enum KegCode {
-  #[serde(rename = ":versioned_formula")]
   VersionedFormula,
-  #[serde(rename = ":provided_by_macos")]
   #[serde(alias = "provided by macOS")]
   ProvidedByMacos,
-  #[serde(rename = ":shadowed_by_macos")]
   ShadowedByMacos,
   #[serde(alias = "it shadows the host toolchain")]
   ShadowsXcode,
   #[serde(alias = "this installs several executables which shadow macOS system commands")]
   #[serde(alias = "it can shadow system glibc if linked")]
   ShadowsMacos,
-  #[serde(alias = "it conflicts with other Glk libraries")]
-  #[serde(alias = "conflicts with other Glk libraries")]
-  #[serde(alias = "this formula is mainly used internally by other formulae.\nUsers are advised to use `pip` to install cython\n")]
-  #[serde(alias = "it conflicts with the Go formula")]
-  #[serde(alias = "conflicts with Kerberos")]
-  #[serde(alias = "ilmbase conflicts with `openexr` and `imath`")]
-  #[serde(alias = "it conflicts with `jpeg-turbo`")]
-  #[serde(alias = "it conflicts with `ghostscript`")]
-  #[serde(alias = "conflicts with PostGIS, which also installs liblwgeom.dylib")]
-  #[serde(alias = "conflicts with postgres formula")]
-  #[serde(alias = "libunwind conflicts with LLVM")]
-  #[serde(alias = "it conflicts with the LuaJIT formula")]
-  #[serde(alias = "mozjpeg is not linked to prevent conflicts with the standard libjpeg")]
-  #[serde(alias = "it conflicts with mysql (which contains client libraries)")]
-  #[serde(alias = "it conflicts with poppler")]
-  #[serde(alias = "it conflicts with qwt")]
-  #[serde(alias = "perl ships with pod2man")]
   ConflictWith,
 }
 
@@ -245,6 +227,39 @@ pub struct Reason<T> {
   pub explanation: String,
 }
 
+impl TryFrom<Reason<KegCode>> for Reason<String> {
+  type Error = serde_json::Error;
+  fn try_from(value: Reason<KegCode>) -> Result<Self, Self::Error> {
+    let result = match value.reason {
+      KegCode::ConflictWith => Self { reason: value.explanation, explanation: String::new() },
+      reason => {
+        let reason = serde_json::to_value(reason)?;
+        Self { reason: format!(":{}", reason.as_str().unwrap()), explanation: value.explanation }
+      }
+    };
+    Ok(result)
+  }
+}
+
+impl TryFrom<Reason<String>> for Reason<KegCode> {
+  type Error = serde_json::Error;
+  fn try_from(t: Reason<String>) -> Result<Self, Self::Error> {
+    let result = if t.reason.starts_with(":") {
+      let reason = serde_json::from_value::<KegCode>(serde_json::Value::String(t.reason[1..].to_string()))?;
+      Self {
+        reason, explanation: t.explanation,
+      }
+    } else {
+      let reason = serde_json::from_value::<KegCode>(serde_json::Value::String(t.reason.to_string())).unwrap_or(KegCode::ConflictWith);
+      Self {
+        reason, explanation: if t.explanation.is_empty() { t.reason } else { t.explanation }
+      }
+    };
+    Ok(result)
+  }
+}
+
+#[serde_as]
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Formula {
   pub name: String,
@@ -262,7 +277,8 @@ pub struct Formula {
   pub version_scheme: usize,
   pub bottle: HashMap<String, Bottles>,
   pub keg_only: bool,
-  pub keg_only_reason: Option<Reason<String>>,
+  #[serde_as(as = "Option<TryFromInto<Reason<String>>>")]
+  pub keg_only_reason: Option<Reason<KegCode>>,
   /// unknown, always empty
   pub options: Vec<String>,
   pub build_dependencies: Dependencies,
