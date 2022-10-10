@@ -19,3 +19,4 @@ clap = { version = "4.0", features=["derive"] }
 reqwest = { version="*", features=["stream"] }
 tokio = { version="1.0", features=["full"] }
 toml = "0.5.9"
+indicatif = "0.17.1"

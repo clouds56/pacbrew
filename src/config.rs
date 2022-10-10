@@ -22,6 +22,22 @@ pub enum Channel {
   stable,
 }
 
+fn is_false(b: &bool) -> bool { !*b }
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+pub struct Mirror {
+  pub url: String,
+  /// if oci { "{url}/{p.name.replace("@", "/")}/blobs/sha256:{p.sha256}" }
+  /// else   { "{url}/{p.name}-{p.version}.{p.arch}.bottle.tar.gz" }
+  #[serde(default, skip_serializing_if = "is_false")]
+  pub oci: bool,
+}
+
+impl Mirror {
+  pub fn new(url: String) -> Self {
+    Self { url, oci: false }
+  }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Config {
   #[serde(flatten)]
@@ -31,6 +47,8 @@ pub struct Config {
   pub target: String,
   #[serde(default, skip_serializing_if = "String::is_empty")]
   pub cache_dir: String,
+  #[serde(default, skip_serializing_if = "Vec::is_empty")]
+  pub mirror_list: Vec<Mirror>,
 }
 
 impl Config {
@@ -43,14 +61,23 @@ impl Config {
     target
   }
 
+  pub fn normalize(&mut self) {
+    self.target = Config::build_target(&self.os, self.arch);
+    if self.cache_dir.is_empty() {
+      self.cache_dir = "/opt/homebrew/cache/pactree/packages".to_string();
+    }
+    if self.mirror_list.is_empty() {
+      let mut default_mirror = Mirror::new("https://ghcr.io/v2/homebrew/core".to_string());
+      default_mirror.oci = true;
+      self.mirror_list.push(default_mirror);
+    }
+  }
+
   pub fn load<P: AsRef<Path>>(path: P) -> anyhow::Result<Self> {
     let s = std::fs::read_to_string(path)?;
     let mut result = toml::from_str::<Self>(&s)?;
     // TODO: figure out most thing with default value
-    result.target = Config::build_target(&result.os, result.arch);
-    if result.cache_dir.is_empty() {
-      result.cache_dir = "/opt/homebrew/cache/pactree/packages".to_string();
-    }
+    result.normalize();
     Ok(result)
   }
 
@@ -88,6 +115,7 @@ fn test_config() {
     arch: Arch::arm64,
     target: String::new(),
     cache_dir: String::new(),
+    mirror_list: Vec::new(),
   };
 
   config.save("cache/pactree.conf.old").expect("save");

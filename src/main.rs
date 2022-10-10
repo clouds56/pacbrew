@@ -1,12 +1,12 @@
-#[macro_use] extern crate log;
 use std::collections::BTreeMap;
 
 use clap::Parser;
 
+#[macro_use]
+mod io;
 mod cli;
 mod config;
 mod formula;
-mod io;
 
 pub use formula::Formula;
 

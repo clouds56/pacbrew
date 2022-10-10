@@ -1,18 +1,54 @@
 use std::{path::{Path, PathBuf}, fs::File, io::Write};
+use reqwest::Client;
 use sha2::{Sha256, Digest};
 use futures::StreamExt;
 
+// TODO some kind of suspend
+pub trait Progress {
+  fn set_position(&mut self, size: u64);
+  fn set_length(&mut self, size: u64);
+}
+
+impl Progress for indicatif::ProgressBar {
+  fn set_position(&mut self, size: u64) {
+    indicatif::ProgressBar::set_position(self, size)
+  }
+  fn set_length(&mut self, size: u64) {
+    indicatif::ProgressBar::set_length(self, size)
+  }
+}
+
+pub fn basic_client() -> reqwest::Client {
+  reqwest::Client::builder()
+    .user_agent("Wget/1.21.3")
+    .build().expect("build client")
+}
+
+pub fn github_client() -> reqwest::Client {
+  use reqwest::header;
+  let mut headers = header::HeaderMap::new();
+  let mut auth_value = header::HeaderValue::from_static("Bearer QQ==");
+  auth_value.set_sensitive(true);
+  headers.insert(header::AUTHORIZATION, auth_value);
+  let client = reqwest::Client::builder()
+    .user_agent("pacbrew/0.1")
+    .default_headers(headers).build().expect("build client");
+  client
+}
+
 pub struct Task {
+  pub client: Client,
   // TODO: mirrors, fallback
   pub url: String,
   pub filename: PathBuf,
   pub temp: PathBuf,
   // TODO: verify function
   pub sha256: String,
+  pub progress: Option<Box<dyn Progress>>,
 }
 
 impl Task {
-  fn new<S: ToString, S2: AsRef<Path>, S3: AsRef<Path>>(url: S, filename: S2, temp: Option<S3>, sha256: String) -> Self {
+  pub fn new<S: ToString, S2: AsRef<Path>>(client: Client, url: S, filename: S2, temp: Option<S2>, sha256: String) -> Self {
     let url = url.to_string();
     let sha256 = sha256.to_ascii_lowercase();
     let mut filename = filename.as_ref().to_path_buf();
@@ -24,15 +60,21 @@ impl Task {
     let temp = match temp {
       Some(temp) => temp.as_ref().to_path_buf(),
       None => {
-        let stem = filename.file_name().unwrap_or_else(|| Path::new(&sha256).as_os_str());
+        let mut stem = filename.file_name().unwrap_or_else(|| Path::new(&sha256).as_os_str()).to_os_string();
+        stem.push(".tmp");
         filename.with_file_name(stem)
       }
     };
-    Self { url, filename, temp, sha256 }
+    Self { client, url, filename, temp, sha256, progress: None }
+  }
+
+  pub fn set_progress<P: Progress + 'static>(&mut self, progress: P) -> &mut Self {
+    self.progress = Some(Box::new(progress));
+    self
   }
 
   fn check_result(&self, filename: &Path) -> anyhow::Result<()> {
-    if !self.filename.exists() {
+    if !filename.exists() {
       anyhow::bail!("file {} not exists", filename.to_string_lossy())
     }
 
@@ -60,36 +102,45 @@ impl Task {
     }
   }
 
-  pub async fn download(&self) -> anyhow::Result<u64> {
+  pub async fn download(&mut self) -> anyhow::Result<u64> {
     // https://gist.github.com/giuliano-oliveira/4d11d6b3bb003dba3a1b53f43d81b30d
-    let client = reqwest::Client::new();
-    // TODO: share client?
     let mut downloaded = 0;
-    let resp = client.get(&self.url).bearer_auth("QQ==").send().await?;
-    // let total_size = resp.content_length().unwrap_or(1);
+    trace!("downloading {} to {}", self.url, self.temp.to_string_lossy());
+    let resp = self.client.get(&self.url).send().await?;
+    if !resp.status().is_success() {
+      // anyhow::bail!("request to {} failed with {}", self.url, resp.status())
+    }
+    let total_size = resp.content_length().unwrap_or(1);
+    if let Some(progress) = self.progress.as_mut() {
+      progress.set_length(total_size);
+    }
     let mut file = File::create(&self.temp)?;
     let mut stream = resp.bytes_stream();
     while let Some(chunk) = stream.next().await {
       let chunk = chunk?;
       file.write_all(&chunk)?;
       downloaded += chunk.len() as u64;
+      if let Some(progress) = self.progress.as_mut() {
+        progress.set_position(downloaded);
+      }
     }
     Ok(downloaded)
   }
 
   pub async fn run(&mut self) -> anyhow::Result<()> {
     if self.is_finished() {
+      trace!("{} exists", self.filename.to_string_lossy());
       return Ok(())
     }
     // TODO: partial download
-    self.partial_len();
+    if let Some(len) = self.partial_len() {
+      warn!("fixme: partial file exists ({}), overwrite", len);
+    }
     self.download().await?;
-    if self.check_result(&self.temp).is_ok() {
-      if self.temp != self.filename {
-        std::fs::rename(&self.temp, &self.filename)?;
-      }
-    } else {
-      anyhow::bail!("file {} broken", self.temp.to_string_lossy())
+    if let Err(e) = self.check_result(&self.temp) {
+      anyhow::bail!("file {} broken {:?}", self.temp.to_string_lossy(), e)
+    } else if self.temp != self.filename {
+      std::fs::rename(&self.temp, &self.filename)?;
     }
     Ok(())
   }
