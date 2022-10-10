@@ -1,3 +1,5 @@
 /target
 /Cargo.lock
 formula.json
+/cache/*
+!/cache/pactree.conf

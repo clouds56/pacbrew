@@ -1,4 +1,4 @@
-use std::collections::{VecDeque, BTreeMap};
+use std::{collections::{VecDeque, BTreeMap}, sync::Arc};
 
 use clap::Parser;
 use crate::config::PacTree;
@@ -11,12 +11,13 @@ pub struct Opts {
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
 pub struct PackageName {
   pub name: String,
-  pub reason: Box<Vec<String>>,
+  pub version: String,
+  pub reason: Arc<Vec<String>>,
 }
 
 impl From<String> for PackageName {
   fn from(v: String) -> Self {
-    Self { name: v.clone(), reason: Box::new(vec![]) }
+    Self { name: v.clone(), version: String::new(), reason: Arc::new(vec![]) }
   }
 }
 
@@ -24,12 +25,12 @@ impl PackageName {
   pub fn dependency(&self, names: &[String]) -> Vec<PackageName> {
     let mut reason = self.reason.to_vec();
     reason.push(self.name.to_string());
-    let reason = Box::new(reason);
-    names.iter().map(|i| Self { name: i.to_string(), reason: reason.clone() }).collect()
+    let reason = Arc::new(reason);
+    names.iter().map(|i| Self { name: i.to_string(), version: String::new(), reason: reason.clone() }).collect()
   }
 
-  pub fn replace(&self, name: String) -> Self {
-    Self { name, reason: self.reason.clone() }
+  pub fn replace(&self, name: String, version: String) -> Self {
+    Self { name, version, reason: self.reason.clone() }
   }
 }
 
@@ -40,7 +41,7 @@ pub enum Error {
   #[error("prebuilt")]
   Prebuilt(PackageName),
   #[error("resolve-net")]
-  ResolveNet(),
+  ResolveNet(PackageName, #[source] Arc<reqwest::Error>),
 }
 
 pub type Result<T, E=Error> = std::result::Result<T, E>;
@@ -62,16 +63,18 @@ pub fn resolve(names: &[String], env: &PacTree) -> Result<BTreeMap<String, Packa
         return Err(Error::Resolve(p))
       }
     };
+    // TODO: channel
+    let version = package.versions.stable.clone();
     // TODO: check requirements
-    debug!("resolving {} => {:?}", package.name, package.dependencies);
-    let p = p.replace(package.full_name.to_string());
+    debug!("resolving {}:{} => {:?}", package.name, version, package.dependencies);
+    let p = p.replace(package.full_name.to_string(), version);
     names.extend(p.dependency(&package.dependencies));
     result.insert(p.name.to_string(), p);
   }
   Ok(result)
 }
 
-pub fn resolve_size(names: &[PackageName], env: &PacTree) -> Result<BTreeMap<String, u64>> {
+pub fn resolve_url(names: &[PackageName], env: &PacTree) -> Result<BTreeMap<String, String>> {
   let mut result = BTreeMap::new();
   for p in names {
     let package = match env.get_package(&p.name) {
@@ -95,8 +98,33 @@ pub fn resolve_size(names: &[PackageName], env: &PacTree) -> Result<BTreeMap<Str
         return Err(Error::Prebuilt(p.clone()));
       }
     };
-    debug!("head of {} ({}) => {}", p.name, bottle.sha256, bottle.url);
-    result.insert(p.name.clone(), 0);
+    debug!("url of {} ({}) => {}", p.name, bottle.sha256, bottle.url);
+    // TODO: mirrors
+    result.insert(p.name.clone(), bottle.url.clone());
+  }
+  Ok(result)
+}
+
+#[tokio::main]
+pub async fn resolve_size(names: &BTreeMap<String, String>, env: &PacTree) -> Result<BTreeMap<String, u64>> {
+  let mut result = BTreeMap::new();
+  let client = reqwest::Client::new();
+  // TODO: true concurrent
+  for (name, url) in names {
+    // TODO: mirrors
+    let resp = client.head(url).bearer_auth("QQ==").send().await.map_err(|e| Error::ResolveNet(PackageName::from(name.to_string()), Arc::new(e)))?;
+    if resp.status().is_success() {
+      let headers = resp.headers();
+      // TODO: handle error
+      let size = headers.get("content-length")
+          .and_then(|i| i.to_str().ok())
+          .and_then(|i| i.parse::<u64>().ok())
+          .unwrap_or_default();
+      result.insert(name.to_string(), size);
+      debug!("head {} => {}", url, size);
+    } else {
+      warn!("{} => {} {:?}", url, resp.status(), resp.headers());
+    }
   }
   Ok(result)
 }
@@ -106,6 +134,9 @@ pub fn run(opts: Opts, env: &PacTree) -> Result<()> {
   let all_names = resolve(&opts.names, env)?;
   info!("resolved {:?}", all_names.keys());
   let all_names = all_names.values().cloned().collect::<Vec<_>>();
-  let size = resolve_size(&all_names, env)?;
+  let urls = resolve_url(&all_names, env)?;
+  let size = resolve_size(&urls, env)?;
+  // TODO: confirm and human readable
+  info!("total download {}", size.values().sum::<u64>());
   Ok(())
 }

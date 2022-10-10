@@ -6,6 +6,7 @@ use clap::Parser;
 mod cli;
 mod config;
 mod formula;
+mod io;
 
 pub use formula::Formula;
 
@@ -39,8 +40,9 @@ fn main() -> anyhow::Result<()> {
   let env = config::PacTree {
     aliases: build_aliases(&formula),
     packages: formula.into_iter().map(|i| (i.full_name.clone(), i)).collect(),
-    config: config::Config::new(config::Os::Macos("monterey".to_string()), config::Arch::arm64),
+    config: config::Config::load("cache/pactree.conf")?,
   };
+  debug!("config: {:?}", env.config);
   match sub {
     Subcommand::Add(opts) => cli::add::run(opts, &env)?,
   }
