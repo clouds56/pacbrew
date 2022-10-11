@@ -47,6 +47,23 @@ pub struct Task {
   pub progress: Option<Box<dyn Progress>>,
 }
 
+pub fn check_sha256(filename: &Path, sha256: &str) -> anyhow::Result<()> {
+  if !filename.exists() {
+    anyhow::bail!("file {} not exists", filename.to_string_lossy())
+  }
+
+  // https://stackoverflow.com/questions/69787906/how-to-hash-a-binary-file-in-rust
+  let mut hasher = Sha256::new();
+  let mut file = File::open(&filename)?;
+
+  let bytes_written = std::io::copy(&mut file, &mut hasher)?;
+  let hash_bytes = hasher.finalize();
+  if format!("{:x}", hash_bytes) != sha256.to_ascii_lowercase() {
+    anyhow::bail!("hash of file {} (len:{}) not match {:x} != {}", filename.to_string_lossy(), bytes_written, hash_bytes, sha256)
+  }
+  Ok(())
+}
+
 impl Task {
   pub fn new<S: ToString, S2: AsRef<Path>>(client: Client, url: S, filename: S2, temp: Option<S2>, sha256: String) -> Self {
     let url = url.to_string();
@@ -73,25 +90,8 @@ impl Task {
     self
   }
 
-  fn check_result(&self, filename: &Path) -> anyhow::Result<()> {
-    if !filename.exists() {
-      anyhow::bail!("file {} not exists", filename.to_string_lossy())
-    }
-
-    // https://stackoverflow.com/questions/69787906/how-to-hash-a-binary-file-in-rust
-    let mut hasher = Sha256::new();
-    let mut file = File::open(&filename)?;
-
-    let bytes_written = std::io::copy(&mut file, &mut hasher)?;
-    let hash_bytes = hasher.finalize();
-    if format!("{:x}", hash_bytes) != self.sha256.to_ascii_lowercase() {
-      anyhow::bail!("hash of file {} (len:{}) not match {:x} != {}", filename.to_string_lossy(), bytes_written, hash_bytes, self.sha256)
-    }
-    Ok(())
-  }
-
   pub fn is_finished(&self) -> bool {
-    self.check_result(&self.filename).is_ok()
+    check_sha256(&self.filename, &self.sha256).is_ok()
   }
 
   pub fn partial_len(&self) -> Option<u64> {
@@ -137,7 +137,7 @@ impl Task {
       warn!("fixme: partial file exists ({}), overwrite", len);
     }
     self.download().await?;
-    if let Err(e) = self.check_result(&self.temp) {
+    if let Err(e) = check_sha256(&self.temp, &self.sha256) {
       anyhow::bail!("file {} broken {:?}", self.temp.to_string_lossy(), e)
     } else if self.temp != self.filename {
       std::fs::rename(&self.temp, &self.filename)?;
