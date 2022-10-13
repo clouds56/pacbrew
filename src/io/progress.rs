@@ -59,14 +59,16 @@ pub fn create_pb(prefix: &str, total_len: usize) -> ProgressBar {
   pb
 }
 
-pub fn create_pbb(total_size: u64) -> ProgressBar {
-  let pb = ProgressBar::new(total_size);
-  pb.set_style(ProgressStyle::with_template("{spinner:.green} {wide_msg} {bytes:>10}/{total_bytes:10} {binary_bytes_per_sec:>10} {eta_precise} [{bar:40.cyan/blue}] {percent:>3}%")
+pub fn create_pbb(prefix: &str, total_size: u64) -> ProgressBar {
+  let style = ProgressStyle::with_template("{spinner:.green} {prefix} {wide_msg} {bytes:>10}/{total_bytes:10} {binary_bytes_per_sec:>15} {eta_precise} [{bar:40.cyan/blue}] {percent:>3}%")
     .expect("style with_template")
     // .with_key("per_sec", |state: &ProgressState, w: &mut dyn std::fmt::Write| { write!(w, "{:5}/s", state.per_sec() as usize).ok(); })
     .with_key("eta_precise", |state: &ProgressState, w: &mut dyn std::fmt::Write| {
       write!(w, "{}", if state.is_finished() { FormattedDuration(state.elapsed()) } else { FormattedDuration(state.eta()) }).ok();
     })
-    .progress_chars("#>-"));
+    .progress_chars("#>-");
+  let pb = ProgressBar::new(total_size);
+  pb.set_style(style);
+  pb.set_prefix(prefix.to_string());
   pb
 }

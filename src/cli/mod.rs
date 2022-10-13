@@ -1,5 +1,7 @@
 use std::{collections::BTreeMap, path::PathBuf, sync::Arc};
 
+use serde::{Deserialize, Serialize};
+
 pub mod add;
 
 pub type PackageInfos = BTreeMap<String, PackageInfo>;
@@ -54,10 +56,20 @@ impl PackageInfo {
   }
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PackageMeta {
   pub keg: String,
+  pub explicit: bool,
+  pub size: u64,
+  pub unpacked_size: u64,
   pub depend: Vec<String>,
   pub required: Vec<String>,
   pub files: Vec<String>, // TODO mod?
   pub links: Vec<String>,
+}
+
+impl PackageMeta {
+  pub fn new(keg: String) -> Self {
+    Self { keg, explicit: false, size: 0, unpacked_size: 0, depend: Vec::new(), required: Vec::new(), files: Vec::new(), links: Vec::new() }
+  }
 }

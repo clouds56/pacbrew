@@ -5,8 +5,8 @@ use clap::Parser;
 #[macro_use]
 mod io;
 mod cli;
-mod config;
-mod formula;
+pub mod config;
+pub mod formula;
 
 pub use formula::Formula;
 

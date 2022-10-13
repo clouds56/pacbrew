@@ -154,7 +154,7 @@ pub async fn download_packages(infos: &mut PackageInfos, env: &PacTree) -> Resul
     let client = if p.url.contains("//ghcr.io/") { github_client() } else { basic_client() };
     let mut task = Task::new(client, &p.url, &package_path, None, p.sha256.clone());
     if !package_path.exists() {
-      let pb = create_pbb(0);
+      let pb = create_pbb(&format!("Download {}", p.name), 0);
       pb.set_message(p.name.clone());
       if let Err(e) = task.set_progress(pb.clone()).run().await {
         warn!(@pb => "download {} from {} failed: {:?}", p.name, p.url, e);
@@ -167,29 +167,49 @@ pub async fn download_packages(infos: &mut PackageInfos, env: &PacTree) -> Resul
   Ok(result)
 }
 
-pub fn check_packages(infos: &mut PackageInfos, env: &PacTree) -> Result<BTreeMap<String, PackageMeta>> {
+pub fn check_packages(infos: &PackageInfos, _env: &PacTree) -> Result<BTreeMap<String, PackageMeta>> {
   let mut result = BTreeMap::new();
   let pb = create_pb("Check package", infos.len());
   // TODO: true concurrent
-  for p in infos.values_mut() {
+  for p in infos.values() {
     pb.set_message(format!(" {}", p.name));
 
     check_sha256(&p.pacakge_path, &p.sha256).map_err(|e| Error::Download(p.clone(), Arc::new(e)))?;
 
     // check all files in subfolder "{p.name}/{p.version_full}"
     // https://rust-lang-nursery.github.io/rust-cookbook/compression/tar.html
-    let entry_prefix = format!("{}/{}", p.name, p.version_full);
-    let archive = PackageArchive::new(&p.pacakge_path).map_err(|e| Error::Package(p.clone(), Arc::new(e)))?;
+    let mut meta = PackageMeta::new(format!("{}/{}", p.name, p.version_full));
+    let archive = PackageArchive::open(&p.pacakge_path).map_err(|e| Error::Package(p.clone(), Arc::new(e)))?;
     let entries = archive.entries().map_err(|e| Error::Package(p.clone(), Arc::new(e)))?;
-    for entry in entries {
-      if !entry.starts_with(&entry_prefix) {
+    for entry in &entries {
+      if !entry.starts_with(&meta.keg) {
         error!(@pb => "package {} contains file", entry);
       }
     }
+    meta.files = entries;
+    if p.reason.is_empty() {
+      meta.explicit = true;
+    } else {
+      meta.required.push(p.reason.last().cloned().expect("last"));
+    }
+    result.insert(p.name.clone(), meta);
     pb.inc(1);
   }
   pb.finish_with_message("");
   Ok(result)
+}
+
+pub fn unpack_packages(infos: &PackageInfos, meta: &BTreeMap<String, PackageMeta>, env: &PacTree) -> Result<()> {
+  for p in infos.values() {
+    let m = meta.get(&p.name).expect("meta not present");
+    let dst = Path::new(&env.config.cellar_dir).join(&m.keg);
+    std::fs::create_dir_all(&dst).map_err(|e| Error::Io(Arc::new(e)))?;
+    let archive = PackageArchive::open(&p.pacakge_path).map_err(|e| Error::Package(p.clone(), Arc::new(e)))?;
+    let pb = create_pbb(&format!("Install {}", p.name), archive.size().unwrap_or_default());
+    archive.unpack_with_pb(&pb, &m.keg, &dst).map_err(|e| Error::Package(p.clone(), Arc::new(e)))?;
+    pb.finish();
+  }
+  Ok(())
 }
 
 pub fn run(opts: Opts, env: &PacTree) -> Result<()> {
@@ -203,6 +223,8 @@ pub fn run(opts: Opts, env: &PacTree) -> Result<()> {
   info!("total download {}", all_packages.values().map(|i| i.size).sum::<u64>());
   std::fs::create_dir_all(&env.config.cache_dir).map_err(|e| Error::Io(Arc::new(e)))?;
   download_packages(&mut all_packages, env)?;
-  let package_meta = check_packages(&mut all_packages, env)?;
+  let package_meta = check_packages(&all_packages, env)?;
+  unpack_packages(&all_packages, &package_meta, env)?;
+  // TODO: post install scripts
   Ok(())
 }

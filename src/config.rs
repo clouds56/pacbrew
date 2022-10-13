@@ -46,7 +46,11 @@ pub struct Config {
   #[serde(default, skip_serializing_if = "String::is_empty")]
   pub target: String,
   #[serde(default, skip_serializing_if = "String::is_empty")]
+  pub root_dir: String,
+  #[serde(default, skip_serializing_if = "String::is_empty")]
   pub cache_dir: String,
+  #[serde(default, skip_serializing_if = "String::is_empty")]
+  pub cellar_dir: String,
   #[serde(default, skip_serializing_if = "Vec::is_empty")]
   pub mirror_list: Vec<Mirror>,
 }
@@ -64,7 +68,13 @@ impl Config {
   pub fn normalize(&mut self) {
     self.target = Config::build_target(&self.os, self.arch);
     if self.cache_dir.is_empty() {
-      self.cache_dir = "/opt/homebrew/cache/pactree/packages".to_string();
+      self.cache_dir = "/opt/homebrew/".to_string();
+    }
+    if self.cache_dir.is_empty() {
+      self.cache_dir = "/opt/homebrew/var/cache/pactree/pkg".to_string();
+    }
+    if self.cellar_dir.is_empty() {
+      self.cache_dir = "/opt/homebrew/Cellar".to_string();
     }
     if self.mirror_list.is_empty() {
       let mut default_mirror = Mirror::new("https://ghcr.io/v2/homebrew/core".to_string());
@@ -114,7 +124,9 @@ fn test_config() {
     os: Os::Macos { version: "monterey".to_string() },
     arch: Arch::arm64,
     target: String::new(),
+    root_dir: String::new(),
     cache_dir: String::new(),
+    cellar_dir: String::new(),
     mirror_list: Vec::new(),
   };
 
