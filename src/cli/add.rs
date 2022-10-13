@@ -3,7 +3,7 @@ use std::{collections::{VecDeque, BTreeMap}, sync::Arc, path::{PathBuf, Path}};
 use clap::Parser;
 use crate::io::{progress::{create_pb, create_pbb}, fetch::{github_client, basic_client, check_sha256}, package::{PackageArchive, self}};
 use crate::config::PacTree;
-use super::{PackageInfo, PackageInfos, PackageMeta};
+use super::{PackageInfo, PackageInfos, PackageMeta, save_package_info};
 
 #[derive(Parser)]
 pub struct Opts {
@@ -24,6 +24,8 @@ pub enum Error {
   Io(#[from] Arc<std::io::Error>),
   #[error("broken package {0:?}")]
   Package(PackageInfo, #[source] Arc<package::Error>),
+  #[error("broken package {0:?}")]
+  PackageInfo(PackageInfo, #[source] Arc<anyhow::Error>),
 }
 
 pub type Result<T, E=Error> = std::result::Result<T, E>;
@@ -200,6 +202,8 @@ pub fn check_packages(infos: &PackageInfos, _env: &PacTree) -> Result<BTreeMap<S
 }
 
 pub fn unpack_packages(infos: &PackageInfos, meta: &BTreeMap<String, PackageMeta>, env: &PacTree) -> Result<()> {
+  let meta_local_dir = Path::new(&env.config.meta_dir).join("local");
+  std::fs::create_dir_all(&meta_local_dir).map_err(|e| Error::Io(Arc::new(e)))?;
   for p in infos.values() {
     let m = meta.get(&p.name).expect("meta not present");
     let dst = Path::new(&env.config.cellar_dir).join(&m.keg);
@@ -207,6 +211,8 @@ pub fn unpack_packages(infos: &PackageInfos, meta: &BTreeMap<String, PackageMeta
     let archive = PackageArchive::open(&p.pacakge_path).map_err(|e| Error::Package(p.clone(), Arc::new(e)))?;
     let pb = create_pbb(&format!("Install {}", p.name), archive.size().unwrap_or_default());
     archive.unpack_with_pb(&pb, &m.keg, &dst).map_err(|e| Error::Package(p.clone(), Arc::new(e)))?;
+    let meta_path = meta_local_dir.join(&p.name).join("current");
+    save_package_info(meta_path, p, m).map_err(|e| Error::PackageInfo(p.clone(), Arc::new(e)))?;
     pb.finish();
   }
   Ok(())
