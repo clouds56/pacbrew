@@ -51,6 +51,9 @@ pub fn check_sha256(filename: &Path, sha256: &str) -> anyhow::Result<()> {
   if !filename.exists() {
     anyhow::bail!("file {} not exists", filename.to_string_lossy())
   }
+  if sha256.is_empty() {
+    return Ok(())
+  }
 
   // https://stackoverflow.com/questions/69787906/how-to-hash-a-binary-file-in-rust
   let mut hasher = Sha256::new();
@@ -143,5 +146,11 @@ impl Task {
       std::fs::rename(&self.temp, &self.filename)?;
     }
     Ok(())
+  }
+
+  #[tokio::main]
+  #[allow(dead_code)]
+  pub async fn run_sync(&mut self) -> anyhow::Result<()> {
+    self.run().await
   }
 }

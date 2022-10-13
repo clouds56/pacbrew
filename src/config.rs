@@ -80,7 +80,7 @@ impl Config {
       self.meta_dir = self.root_dir.clone() + "var/lib/pactree";
     }
     if self.cache_dir.is_empty() {
-      self.meta_dir = self.root_dir.clone() + "var/cache/pactree/pkg";
+      self.cache_dir = self.root_dir.clone() + "var/cache/pactree";
     }
     if self.cellar_dir.is_empty() {
       self.cellar_dir =  self.root_dir.clone() + "Cellar";
@@ -144,4 +144,17 @@ fn test_config() {
   let config = Config::load("cache/pactree.conf").expect("load");
   assert_eq!(config.target, "arm64_monterey");
   config.save("cache/pactree.conf.new").expect("save");
+}
+
+#[test]
+fn test_formula() {
+  // TODO: enable brotli?
+  use crate::io::{fetch::Task, progress::create_pbb};
+  let formula_url = "https://formulae.brew.sh/api/formula.json";
+  let mut task = Task::new(reqwest::Client::new(), formula_url, "cache/formula.json.tmp", None, String::new());
+  task.set_progress(create_pbb("formula.json", 0)).run_sync().expect("download");
+  let formula_str = std::fs::read_to_string("cache/formula.json.tmp").expect("read");
+  let formula = serde_json::from_str::<Vec<Formula>>(&formula_str).expect("parse");
+  assert_ne!(formula.len(), 0);
+  std::fs::rename("cache/formula.json.tmp", "cache/formula.json").expect("rename");
 }

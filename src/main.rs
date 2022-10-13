@@ -35,14 +35,15 @@ fn build_aliases(formula: &[Formula]) -> BTreeMap<String, String> {
 fn main() -> anyhow::Result<()> {
   flexi_logger::Logger::try_with_str("info, pacbrew=debug")?.start()?;
   let sub = Subcommand::parse();
-  let formula_str = include_str!("../cache/formula.json");
-  let formula = serde_json::from_str::<Vec<Formula>>(formula_str)?;
+  let config = config::Config::load("cache/pactree.conf")?;
+  debug!("config: {:?}", config);
+  let formula_str = std::fs::read_to_string("cache/formula.json")?;
+  let formula = serde_json::from_str::<Vec<Formula>>(&formula_str)?;
   let env = config::PacTree {
     aliases: build_aliases(&formula),
     packages: formula.into_iter().map(|i| (i.full_name.clone(), i)).collect(),
-    config: config::Config::load("cache/pactree.conf")?,
+    config,
   };
-  debug!("config: {:?}", env.config);
   match sub {
     Subcommand::Add(opts) => cli::add::run(opts, &env)?,
   }

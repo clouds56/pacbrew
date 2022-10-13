@@ -110,7 +110,7 @@ pub fn resolve_url(infos: &mut PackageInfos, env: &PacTree) -> Result<BTreeMap<S
 pub async fn resolve_size(infos: &mut PackageInfos, env: &PacTree) -> Result<BTreeMap<String, u64>> {
   let pb = create_pb("Resolve size", infos.len());
   let mut result = BTreeMap::new();
-  let cache_dir = Path::new(&env.config.cache_dir);
+  let cache_dir = Path::new(&env.config.cache_dir).join("pkg");
   // TODO: true concurrent
   for p in infos.values_mut() {
     pb.set_message(format!(" for {}", p.name));
@@ -148,7 +148,7 @@ pub async fn resolve_size(infos: &mut PackageInfos, env: &PacTree) -> Result<BTr
 pub async fn download_packages(infos: &mut PackageInfos, env: &PacTree) -> Result<BTreeMap<String, PathBuf>> {
   use crate::io::fetch::Task;
   let mut result = BTreeMap::new();
-  let cache_dir = Path::new(&env.config.cache_dir);
+  let cache_dir = Path::new(&env.config.cache_dir).join("pkg");
   // TODO show global progress bar
   for p in infos.values_mut() {
     let package_path = cache_dir.join(&p.package_name);
