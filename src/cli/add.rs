@@ -24,8 +24,10 @@ pub enum Error {
   Io(#[from] Arc<std::io::Error>),
   #[error("broken package {0:?}")]
   Package(PackageInfo, #[source] Arc<package::Error>),
-  #[error("broken package {0:?}")]
+  #[error("package info {0:?}")]
   PackageInfo(PackageInfo, #[source] Arc<anyhow::Error>),
+  #[error("package ruby {0:?}")]
+  PackageRuby(PackageInfo, #[source] Arc<anyhow::Error>),
 }
 
 pub type Result<T, E=Error> = std::result::Result<T, E>;
@@ -62,7 +64,7 @@ pub fn resolve_url(infos: &mut PackageInfos, env: &PacTree) -> Result<BTreeMap<S
   let pb = create_pb("Resolve url", infos.len());
   let mut result = BTreeMap::new();
   for p in infos.values_mut() {
-    pb.set_message(format!(" for {}", p.name));
+    pb.set_message(format!("for {}", p.name));
     let package = match env.get_package(&p.name) {
       Some(t) => t,
       None => {
@@ -102,7 +104,7 @@ pub fn resolve_url(infos: &mut PackageInfos, env: &PacTree) -> Result<BTreeMap<S
     result.insert(p.name.clone(), p.url.clone());
     pb.inc(1);
   }
-  pb.finish_with_message("Resolve url");
+  pb.finish_with_message("");
   Ok(result)
 }
 
@@ -113,7 +115,7 @@ pub async fn resolve_size(infos: &mut PackageInfos, env: &PacTree) -> Result<BTr
   let cache_dir = Path::new(&env.config.cache_dir).join("pkg");
   // TODO: true concurrent
   for p in infos.values_mut() {
-    pb.set_message(format!(" for {}", p.name));
+    pb.set_message(format!("for {}", p.name));
     // TODO: mirrors
     p.package_name = format!("{}-{}.{}.bottle.tar.gz", p.name, p.version_full, p.arch);
     if cache_dir.join(&p.package_name).exists() {
@@ -149,6 +151,7 @@ pub async fn download_packages(infos: &mut PackageInfos, env: &PacTree) -> Resul
   use crate::io::fetch::Task;
   let mut result = BTreeMap::new();
   let cache_dir = Path::new(&env.config.cache_dir).join("pkg");
+  std::fs::create_dir_all(&cache_dir).map_err(|e| Error::Io(Arc::new(e)))?;
   // TODO show global progress bar
   for p in infos.values_mut() {
     let package_path = cache_dir.join(&p.package_name);
@@ -174,7 +177,7 @@ pub fn check_packages(infos: &PackageInfos, _env: &PacTree) -> Result<BTreeMap<S
   let pb = create_pb("Check package", infos.len());
   // TODO: true concurrent
   for p in infos.values() {
-    pb.set_message(format!(" {}", p.name));
+    pb.set_message(format!("{}", p.name));
 
     check_sha256(&p.pacakge_path, &p.sha256).map_err(|e| Error::Download(p.clone(), Arc::new(e)))?;
 
@@ -183,10 +186,18 @@ pub fn check_packages(infos: &PackageInfos, _env: &PacTree) -> Result<BTreeMap<S
     let mut meta = PackageMeta::new(format!("{}/{}", p.name, p.version_full));
     let archive = PackageArchive::open(&p.pacakge_path).map_err(|e| Error::Package(p.clone(), Arc::new(e)))?;
     let entries = archive.entries().map_err(|e| Error::Package(p.clone(), Arc::new(e)))?;
+    let mut found_brew_rb = false;
+    let brew_rb_file = p.brew_rb_file();
     for entry in &entries {
       if !entry.starts_with(&meta.keg) {
         error!(@pb => "package {} contains file", entry);
       }
+      if entry == &brew_rb_file {
+        found_brew_rb = true;
+      }
+    }
+    if !found_brew_rb {
+      warn!(@pb => "package {} doesn't contains brew {} file", p.name, brew_rb_file)
     }
     meta.files = entries;
     if p.reason.is_empty() {
@@ -218,6 +229,57 @@ pub fn unpack_packages(infos: &PackageInfos, meta: &BTreeMap<String, PackageMeta
   Ok(())
 }
 
+pub fn link_packages(infos: &PackageInfos, meta: &mut BTreeMap<String, PackageMeta>, env: &PacTree) -> Result<()> {
+  let meta_local_dir = Path::new(&env.config.meta_dir).join("local");
+  std::fs::create_dir_all(&meta_local_dir).map_err(|e| Error::Io(Arc::new(e)))?;
+  let pb = create_pb("Link package", infos.len());
+  // TODO: true concurrent
+  for p in infos.values() {
+    pb.set_message(format!("{}", p.name));
+    let m = meta.get_mut(&p.name).expect("meta not present");
+    let cellar_path = Path::new(&env.config.cellar_dir).join(&m.keg);
+    let cellar_abs_path = cellar_path.canonicalize().map_err(|e| Error::Io(Arc::new(e)))?;
+    let brew_rb_path = Path::new(&env.config.cellar_dir).join(p.brew_rb_file());
+    let brew_rb_file = std::fs::read_to_string(&brew_rb_path).map_err(|e| Error::Io(Arc::new(e)))?;
+    let mut link_overwrite = Vec::new();
+    for line in brew_rb_file.lines() {
+      if line.trim().starts_with("link_overwrite ") {
+        let s = line.trim().trim_start_matches("link_overwrite").trim();
+        let s = serde_json::from_str::<String>(s).map_err(|e| Error::PackageRuby(p.clone(), Arc::new(e.into())))?;
+        link_overwrite.push(s);
+      }
+    }
+    let mut links = Vec::new();
+    for link in &link_overwrite {
+      let src = cellar_abs_path.join(link);
+      let dst = Path::new(&env.config.root_dir).join(link);
+      debug!(@pb => "link package {}: {}", p.name, link);
+      if dst.exists() || std::fs::symlink_metadata(&dst).is_ok() {
+        // TODO: force?
+        // TODO: remove parent dir
+        symlink::remove_symlink_auto(&dst).ok();
+      }
+      if dst.exists() || std::fs::symlink_metadata(&dst).is_ok() {
+        error!(@pb => "file {} already exists", dst.to_string_lossy());
+      }
+      std::fs::create_dir_all(dst.parent().expect("parent")).map_err(|e| Error::Io(Arc::new(e)))?;
+      if src.is_dir() {
+        std::os::unix::fs::symlink(&src, &dst).map_err(|e| Error::Io(Arc::new(e)))?;
+        links.push(link.trim_end_matches('/').to_string() + "/");
+      } else {
+        std::os::unix::fs::symlink(&src, &dst).map_err(|e| Error::Io(Arc::new(e)))?;
+        links.push(link.to_string());
+      }
+    }
+    m.links = links;
+    let meta_path = meta_local_dir.join(&p.name).join("current");
+    save_package_info(meta_path, p, m).map_err(|e| Error::PackageInfo(p.clone(), Arc::new(e)))?;
+    pb.inc(1);
+  }
+  pb.finish_with_message("");
+  Ok(())
+}
+
 pub fn run(opts: Opts, env: &PacTree) -> Result<()> {
   info!("adding {:?}", opts.names);
   let mut all_packages = resolve(&opts.names, env)?;
@@ -229,8 +291,9 @@ pub fn run(opts: Opts, env: &PacTree) -> Result<()> {
   info!("total download {}", all_packages.values().map(|i| i.size).sum::<u64>());
   std::fs::create_dir_all(&env.config.cache_dir).map_err(|e| Error::Io(Arc::new(e)))?;
   download_packages(&mut all_packages, env)?;
-  let package_meta = check_packages(&all_packages, env)?;
+  let mut package_meta = check_packages(&all_packages, env)?;
   unpack_packages(&all_packages, &package_meta, env)?;
+  link_packages(&all_packages, &mut package_meta, env)?;
   // TODO: post install scripts
   Ok(())
 }

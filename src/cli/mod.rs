@@ -55,6 +55,10 @@ impl PackageInfo {
     };
     Self { name, version, version_full, ..self.clone() }
   }
+
+  pub fn brew_rb_file(&self) -> String {
+    format!("{}/{}/.brew/{}.rb", self.name, self.version_full, self.name)
+  }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -65,8 +69,8 @@ pub struct PackageMeta {
   pub unpacked_size: u64,
   pub depend: Vec<String>,
   pub required: Vec<String>,
-  pub files: Vec<String>, // TODO mod?
   pub links: Vec<String>,
+  pub files: Vec<String>, // TODO mod?
 }
 
 impl PackageMeta {
