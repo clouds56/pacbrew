@@ -242,11 +242,26 @@ pub fn link_packages(infos: &PackageInfos, meta: &mut BTreeMap<String, PackageMe
     let brew_rb_path = Path::new(&env.config.cellar_dir).join(p.brew_rb_file());
     let brew_rb_file = std::fs::read_to_string(&brew_rb_path).map_err(|e| Error::Io(Arc::new(e)))?;
     let mut link_overwrite = Vec::new();
+    let bin_name = format!("bin/{}", p.name.split("@").next().expect("first"));
+    if cellar_path.join(&bin_name).exists() {
+      link_overwrite.push(bin_name);
+    }
+    let mut link_param_str = "[".to_string();
     for line in brew_rb_file.lines() {
-      if line.trim().starts_with("link_overwrite ") {
-        let s = line.trim().trim_start_matches("link_overwrite").trim();
-        let s = serde_json::from_str::<String>(s).map_err(|e| Error::PackageRuby(p.clone(), Arc::new(e.into())))?;
-        link_overwrite.push(s);
+      if link_param_str != "[" {
+        link_param_str += line.trim();
+      } else if line.trim().starts_with("link_overwrite ") {
+        link_param_str += line.trim().trim_start_matches("link_overwrite").trim();
+      }
+      if link_param_str.ends_with(",") {
+        continue;
+      }
+      if link_param_str != "[" {
+        let s = link_param_str + "]";
+        // debug!("parsing {:?}", s);
+        let s = serde_json::from_str::<Vec<String>>(&s).map_err(|e| Error::PackageRuby(p.clone(), Arc::new(e.into())))?;
+        link_overwrite.extend(s);
+        link_param_str = "[".to_string();
       }
     }
     let mut links = Vec::new();
@@ -254,6 +269,11 @@ pub fn link_packages(infos: &PackageInfos, meta: &mut BTreeMap<String, PackageMe
       let src = cellar_abs_path.join(link);
       let dst = Path::new(&env.config.root_dir).join(link);
       debug!(@pb => "link package {}: {}", p.name, link);
+      if !src.exists() {
+        error!(@pb => "file {} not exists", cellar_path.join(link).to_string_lossy());
+        // TODO: link blob (like include/hwy/* in highway)
+        continue;
+      }
       if dst.exists() || std::fs::symlink_metadata(&dst).is_ok() {
         // TODO: force?
         // TODO: remove parent dir
