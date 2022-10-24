@@ -1,11 +1,44 @@
 use std::{collections::BTreeMap, path::{PathBuf, Path}, sync::Arc};
 
 use serde::{Deserialize, Serialize};
+use serde_with::{serde_as, TryFromInto};
 
 pub mod add;
 
 pub type PackageInfos = BTreeMap<String, PackageInfo>;
 
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+pub enum RelocateMode {
+  Relocate, Skip,
+  Path(String),
+}
+
+impl TryFrom<String> for RelocateMode {
+  type Error = String;
+
+  fn try_from(value: String) -> Result<Self, Self::Error> {
+    let result = if value.starts_with(":") {
+      match value.as_str() {
+        ":any" => RelocateMode::Relocate,
+        ":any_skip_relocation" => RelocateMode::Skip,
+        _ => return Err(format!("unknown cellar symbol {}", value)),
+      }
+    } else {
+      RelocateMode::Path(value)
+    };
+    Ok(result)
+  }
+}
+impl Into<String> for RelocateMode {
+  fn into(self) -> String {
+    match self {
+      RelocateMode::Relocate => ":any".to_string(),
+      RelocateMode::Skip => ":any_skip_relocation".to_string(),
+      RelocateMode::Path(value) => value,
+    }
+  }
+}
+#[serde_as]
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 pub struct PackageInfo {
   // stage resolve
@@ -13,6 +46,8 @@ pub struct PackageInfo {
   pub version: String,
   pub version_full: String,
   // stage resolve_url
+  #[serde_as(as = "TryFromInto<String>")]
+  pub relocate: RelocateMode,
   pub arch: String,
   pub sha256: String,
   pub url: String,
@@ -28,7 +63,7 @@ pub struct PackageInfo {
 impl PackageInfo {
   fn new(v: String) -> Self {
     Self {
-      name: v.clone(), version: String::new(), version_full: String::new(),
+      name: v.clone(), version: String::new(), version_full: String::new(), relocate: RelocateMode::Path(String::new()),
       arch: String::new(), sha256: String::new(), url: String::new(), download_size: 0, size: 0,
       package_name: String::new(), pacakge_path: PathBuf::new(),
       reason: Arc::new(vec![])
@@ -71,11 +106,16 @@ pub struct PackageMeta {
   pub required: Vec<String>,
   pub links: Vec<String>,
   pub files: Vec<String>, // TODO mod?
+  pub patched_binaries: Vec<String>,
+  pub patched_text: Vec<String>,
 }
 
 impl PackageMeta {
   pub fn new(keg: String) -> Self {
-    Self { keg, explicit: false, size: 0, unpacked_size: 0, depend: Vec::new(), required: Vec::new(), files: Vec::new(), links: Vec::new() }
+    Self {
+      keg, explicit: false, size: 0, unpacked_size: 0, depend: Vec::new(), required: Vec::new(),
+      files: Vec::new(), links: Vec::new(), patched_binaries: Vec::new(), patched_text: Vec::new(),
+    }
   }
 }
 

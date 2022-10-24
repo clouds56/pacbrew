@@ -1,9 +1,9 @@
 use std::{collections::{VecDeque, BTreeMap}, sync::Arc, path::{PathBuf, Path}};
 
 use clap::Parser;
-use crate::io::{progress::{create_pb, create_pbb}, fetch::{github_client, basic_client, check_sha256}, package::{PackageArchive, self}};
+use crate::{io::{progress::{create_pb, create_pbb}, fetch::{github_client, basic_client, check_sha256}, package::{PackageArchive, self}}, relocation::{try_open_ofile, Relocations, RelocationPattern, with_permission}};
 use crate::config::PacTree;
-use super::{PackageInfo, PackageInfos, PackageMeta, save_package_info};
+use super::{PackageInfo, PackageInfos, PackageMeta, save_package_info, RelocateMode};
 
 #[derive(Parser)]
 pub struct Opts {
@@ -20,14 +20,18 @@ pub enum Error {
   ResolveNet(PackageInfo, #[source] Arc<reqwest::Error>),
   #[error("download: package {0:?} failed")]
   Download(PackageInfo, #[source] Arc<anyhow::Error>),
-  #[error("io {0:?}")]
-  Io(#[from] Arc<std::io::Error>),
+  #[error("io: {0:?}")]
+  Io(PathBuf, #[source] Arc<std::io::Error>),
   #[error("broken package {0:?}")]
   Package(PackageInfo, #[source] Arc<package::Error>),
   #[error("package info {0:?}")]
   PackageInfo(PackageInfo, #[source] Arc<anyhow::Error>),
   #[error("package ruby {0:?}")]
   PackageRuby(PackageInfo, #[source] Arc<anyhow::Error>),
+  #[error("package relocation: package {0:?}, file: {1}")]
+  PackageRelocation(PackageInfo, String, #[source] Arc<anyhow::Error>),
+  #[error("unimplemented: package {0:?} not implement {1}")]
+  Unimplemented(PackageInfo, String, #[source] Arc<anyhow::Error>),
 }
 
 pub type Result<T, E=Error> = std::result::Result<T, E>;
@@ -90,6 +94,7 @@ pub fn resolve_url(infos: &mut PackageInfos, env: &PacTree) -> Result<BTreeMap<S
     p.arch = if bottles.files.contains_key(&env.config.target) {
       env.config.target.clone()
     } else { "all".to_string() };
+    p.relocate = bottle.cellar.to_string().try_into().map_err(|e: String| Error::Unimplemented(p.clone(), "relocate".to_string(), Arc::new(anyhow::anyhow!("{}", e))))?;
     p.sha256 = bottle.sha256.clone();
     if let Some(mirror) = env.config.mirror_list.first() {
       if mirror.oci {
@@ -100,7 +105,7 @@ pub fn resolve_url(infos: &mut PackageInfos, env: &PacTree) -> Result<BTreeMap<S
     } else {
       p.url = bottle.url.clone();
     }
-    debug!(@pb => "url of {} ({}) => {}", p.name, p.sha256, p.url);
+    debug!(@pb => "url of {} ({:?}, {}) => {}", p.name, p.relocate, p.sha256, p.url);
     result.insert(p.name.clone(), p.url.clone());
     pb.inc(1);
   }
@@ -151,7 +156,7 @@ pub async fn download_packages(infos: &mut PackageInfos, env: &PacTree) -> Resul
   use crate::io::fetch::Task;
   let mut result = BTreeMap::new();
   let cache_dir = Path::new(&env.config.cache_dir).join("pkg");
-  std::fs::create_dir_all(&cache_dir).map_err(|e| Error::Io(Arc::new(e)))?;
+  std::fs::create_dir_all(&cache_dir).map_err(|e| Error::Io(cache_dir.to_path_buf(), Arc::new(e)))?;
   // TODO show global progress bar
   for p in infos.values_mut() {
     let package_path = cache_dir.join(&p.package_name);
@@ -214,11 +219,11 @@ pub fn check_packages(infos: &PackageInfos, _env: &PacTree) -> Result<BTreeMap<S
 
 pub fn unpack_packages(infos: &PackageInfos, meta: &BTreeMap<String, PackageMeta>, env: &PacTree) -> Result<()> {
   let meta_local_dir = Path::new(&env.config.meta_dir).join("local");
-  std::fs::create_dir_all(&meta_local_dir).map_err(|e| Error::Io(Arc::new(e)))?;
+  std::fs::create_dir_all(&meta_local_dir).map_err(|e| Error::Io(meta_local_dir.to_path_buf(), Arc::new(e)))?;
   for p in infos.values() {
     let m = meta.get(&p.name).expect("meta not present");
     let dst = Path::new(&env.config.cellar_dir).join(&m.keg);
-    std::fs::create_dir_all(&dst).map_err(|e| Error::Io(Arc::new(e)))?;
+    std::fs::create_dir_all(&dst).map_err(|e| Error::Io(dst.to_path_buf(), Arc::new(e)))?;
     let archive = PackageArchive::open(&p.pacakge_path).map_err(|e| Error::Package(p.clone(), Arc::new(e)))?;
     let pb = create_pbb(&format!("Install {}", p.name), archive.size().unwrap_or_default());
     archive.unpack_with_pb(&pb, &m.keg, &dst).map_err(|e| Error::Package(p.clone(), Arc::new(e)))?;
@@ -229,18 +234,68 @@ pub fn unpack_packages(infos: &PackageInfos, meta: &BTreeMap<String, PackageMeta
   Ok(())
 }
 
+pub fn relocate_packages(infos: &PackageInfos, meta: &mut BTreeMap<String, PackageMeta>, env: &PacTree) -> Result<()> {
+  let mut len = infos.len();
+  let meta_local_dir = Path::new(&env.config.meta_dir).join("local");
+  std::fs::create_dir_all(&meta_local_dir).map_err(|e| Error::Io(meta_local_dir.to_path_buf(), Arc::new(e)))?;
+  let relocation_pattern = RelocationPattern::new(&env.config).expect("path cannot resolved");
+  let pb = create_pb("Relocate package", infos.len());
+  for p in infos.values() {
+    if p.relocate == RelocateMode::Skip {
+      len -= 1;
+      pb.set_length(len as u64);
+      continue;
+    }
+    let m = meta.get_mut(&p.name).expect("meta not present");
+    let mut patched_binaries = Vec::new();
+    let mut patched_text = Vec::new();
+    let dst = Path::new(&env.config.cellar_dir);
+    for f in &m.files {
+      let filename =  dst.join(f);
+      if !filename.exists() {
+        warn!(@pb => "reloc cannot open file {}", filename.to_string_lossy());
+      } else if filename.is_symlink() {
+        continue;
+      } if let Ok(ofile) = try_open_ofile(&filename) {
+        let reloc = Relocations::from_ofile(&ofile, &relocation_pattern).map_err(|e| Error::PackageRelocation(p.clone(), f.clone(), Arc::new(e)))?;
+        if !reloc.is_empty() {
+          debug!(@pb => "reloc bin {}", filename.to_string_lossy());
+          reloc.apply_file(filename).map_err(|e| Error::PackageRelocation(p.clone(), f.clone(), Arc::new(e)))?;
+          patched_binaries.push(f.clone());
+        }
+      } else if let Ok(text) = std::fs::read_to_string(&filename) {
+        if let Some(text) = relocation_pattern.replace_text(&text) {
+          debug!(@pb => "reloc text {}", filename.to_string_lossy());
+          with_permission(filename.as_path(), ||
+            std::fs::write(filename.as_path(), text)
+          ).map_err(|e| Error::Io(filename.to_path_buf(), Arc::new(e)))?
+          .map_err(|e| Error::PackageRelocation(p.clone(), f.clone(), Arc::new(e.into())))?;
+          patched_text.push(f.clone());
+        }
+      }
+    }
+    m.patched_binaries = patched_binaries;
+    m.patched_text = patched_text;
+    let meta_path = meta_local_dir.join(&p.name).join("current");
+    save_package_info(meta_path, p, m).map_err(|e| Error::PackageInfo(p.clone(), Arc::new(e)))?;
+    pb.inc(1);
+  }
+  Ok(())
+}
+
 pub fn link_packages(infos: &PackageInfos, meta: &mut BTreeMap<String, PackageMeta>, env: &PacTree) -> Result<()> {
   let meta_local_dir = Path::new(&env.config.meta_dir).join("local");
-  std::fs::create_dir_all(&meta_local_dir).map_err(|e| Error::Io(Arc::new(e)))?;
+  std::fs::create_dir_all(&meta_local_dir).map_err(|e| Error::Io(meta_local_dir.to_path_buf(), Arc::new(e)))?;
+  std::fs::create_dir_all(Path::new(&env.config.root_dir).join("opt")).map_err(|e| Error::Io(Path::new(&env.config.root_dir).join("opt"), Arc::new(e)))?;
   let pb = create_pb("Link package", infos.len());
   // TODO: true concurrent
   for p in infos.values() {
     pb.set_message(format!("{}", p.name));
     let m = meta.get_mut(&p.name).expect("meta not present");
     let cellar_path = Path::new(&env.config.cellar_dir).join(&m.keg);
-    let cellar_abs_path = cellar_path.canonicalize().map_err(|e| Error::Io(Arc::new(e)))?;
+    let cellar_abs_path = cellar_path.canonicalize().map_err(|e| Error::Io(cellar_path.to_path_buf(), Arc::new(e)))?;
     let brew_rb_path = Path::new(&env.config.cellar_dir).join(p.brew_rb_file());
-    let brew_rb_file = std::fs::read_to_string(&brew_rb_path).map_err(|e| Error::Io(Arc::new(e)))?;
+    let brew_rb_file = std::fs::read_to_string(&brew_rb_path).map_err(|e| Error::Io(brew_rb_path.to_path_buf(), Arc::new(e)))?;
     let mut link_overwrite = Vec::new();
     let bin_name = format!("bin/{}", p.name.split("@").next().expect("first"));
     if cellar_path.join(&bin_name).exists() {
@@ -282,15 +337,21 @@ pub fn link_packages(infos: &PackageInfos, meta: &mut BTreeMap<String, PackageMe
       if dst.exists() || std::fs::symlink_metadata(&dst).is_ok() {
         error!(@pb => "file {} already exists", dst.to_string_lossy());
       }
-      std::fs::create_dir_all(dst.parent().expect("parent")).map_err(|e| Error::Io(Arc::new(e)))?;
+      std::fs::create_dir_all(dst.parent().expect("parent")).map_err(|e| Error::Io(dst.to_path_buf(), Arc::new(e)))?;
       if src.is_dir() {
-        std::os::unix::fs::symlink(&src, &dst).map_err(|e| Error::Io(Arc::new(e)))?;
+        std::os::unix::fs::symlink(&src, &dst).map_err(|e| Error::Io(dst.to_path_buf(), Arc::new(e)))?;
         links.push(link.trim_end_matches('/').to_string() + "/");
       } else {
-        std::os::unix::fs::symlink(&src, &dst).map_err(|e| Error::Io(Arc::new(e)))?;
+        std::os::unix::fs::symlink(&src, &dst).map_err(|e| Error::Io(dst.to_path_buf(), Arc::new(e)))?;
         links.push(link.to_string());
       }
     }
+
+    let opt_path = Path::new(&env.config.root_dir).join("opt").join(&p.name);
+    if opt_path.exists() || std::fs::symlink_metadata(&opt_path).is_ok() {
+      symlink::remove_symlink_auto(&opt_path).ok();
+    }
+    std::os::unix::fs::symlink(&cellar_abs_path, &opt_path).map_err(|e| Error::Io(opt_path.to_path_buf(), Arc::new(e)))?;
     m.links = links;
     let meta_path = meta_local_dir.join(&p.name).join("current");
     save_package_info(meta_path, p, m).map_err(|e| Error::PackageInfo(p.clone(), Arc::new(e)))?;
@@ -309,10 +370,11 @@ pub fn run(opts: Opts, env: &PacTree) -> Result<()> {
   resolve_size(&mut all_packages, env)?;
   // TODO: confirm and human readable
   info!("total download {}", all_packages.values().map(|i| i.size).sum::<u64>());
-  std::fs::create_dir_all(&env.config.cache_dir).map_err(|e| Error::Io(Arc::new(e)))?;
+  std::fs::create_dir_all(&env.config.cache_dir).map_err(|e| Error::Io(Path::new(&env.config.cache_dir).to_owned(), Arc::new(e)))?;
   download_packages(&mut all_packages, env)?;
   let mut package_meta = check_packages(&all_packages, env)?;
   unpack_packages(&all_packages, &package_meta, env)?;
+  relocate_packages(&all_packages, &mut package_meta, env)?;
   link_packages(&all_packages, &mut package_meta, env)?;
   // TODO: post install scripts
   Ok(())
