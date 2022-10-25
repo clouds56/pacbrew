@@ -110,8 +110,9 @@ impl Task {
     let mut downloaded = 0;
     trace!("downloading {} to {}", self.url, self.temp.to_string_lossy());
     let resp = self.client.get(&self.url).send().await?;
+    trace!("resp: {:?}", resp);
     if !resp.status().is_success() {
-      // anyhow::bail!("request to {} failed with {}", self.url, resp.status())
+      anyhow::bail!("request to {} failed with {}", self.url, resp.status())
     }
     let total_size = resp.content_length().unwrap_or(1);
     if let Some(progress) = self.progress.as_mut() {

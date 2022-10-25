@@ -53,6 +53,8 @@ pub struct Config {
   pub cache_dir: String,
   #[serde(default, skip_serializing_if = "String::is_empty")]
   pub cellar_dir: String,
+  #[serde(default, skip_serializing_if = "String::is_empty")]
+  pub formula_url: String,
   #[serde(default, skip_serializing_if = "Vec::is_empty")]
   pub mirror_list: Vec<Mirror>,
 }
@@ -83,7 +85,10 @@ impl Config {
       self.cache_dir = self.root_dir.clone() + "var/cache/pactree";
     }
     if self.cellar_dir.is_empty() {
-      self.cellar_dir =  self.root_dir.clone() + "Cellar";
+      self.cellar_dir = self.root_dir.clone() + "Cellar";
+    }
+    if self.formula_url.is_empty() {
+      self.formula_url = "https://formulae.brew.sh/api/formula.json".to_string();
     }
     if self.mirror_list.is_empty() {
       let mut default_mirror = Mirror::new("https://ghcr.io/v2/homebrew/core".to_string());
@@ -137,6 +142,7 @@ fn test_config() {
     meta_dir: String::new(),
     cache_dir: String::new(),
     cellar_dir: String::new(),
+    formula_url: String::new(),
     mirror_list: Vec::new(),
   };
 

@@ -13,7 +13,8 @@ pub use formula::Formula;
 
 #[derive(Parser)]
 pub enum Subcommand {
-  Add(cli::add::Opts)
+  Add(cli::add::Opts),
+  Update(cli::update::Opts),
 }
 
 fn build_aliases(formula: &[Formula]) -> BTreeMap<String, String> {
@@ -34,7 +35,7 @@ fn build_aliases(formula: &[Formula]) -> BTreeMap<String, String> {
 }
 
 fn main() -> anyhow::Result<()> {
-  flexi_logger::Logger::try_with_str("info, pacbrew=debug")?.start()?;
+  flexi_logger::Logger::try_with_env_or_str("info, pacbrew=debug")?.start()?;
   let sub = Subcommand::parse();
   let config = config::Config::load("cache/pactree.conf")?;
   debug!("config: {:?}", config);
@@ -47,6 +48,7 @@ fn main() -> anyhow::Result<()> {
   };
   match sub {
     Subcommand::Add(opts) => cli::add::run(opts, &env)?,
+    Subcommand::Update(opts) => cli::update::run(opts, &env)?,
   }
   Ok(())
 }

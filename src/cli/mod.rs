@@ -4,6 +4,7 @@ use serde::{Deserialize, Serialize};
 use serde_with::{serde_as, TryFromInto};
 
 pub mod add;
+pub mod update;
 
 pub type PackageInfos = BTreeMap<String, PackageInfo>;
 
