@@ -46,6 +46,7 @@ pub struct PackageInfo {
   pub name: String,
   pub version: String,
   pub version_full: String,
+  pub rebuild: usize,
   // stage resolve_url
   #[serde_as(as = "TryFromInto<String>")]
   pub relocate: RelocateMode,
@@ -64,8 +65,9 @@ pub struct PackageInfo {
 impl PackageInfo {
   fn new(v: String) -> Self {
     Self {
-      name: v.clone(), version: String::new(), version_full: String::new(), relocate: RelocateMode::Path(String::new()),
-      arch: String::new(), sha256: String::new(), url: String::new(), download_size: 0, size: 0,
+      name: v.clone(), version: String::new(), version_full: String::new(), rebuild: 0,
+      relocate: RelocateMode::Path(String::new()), arch: String::new(), sha256: String::new(),
+      url: String::new(), download_size: 0, size: 0,
       package_name: String::new(), pacakge_path: PathBuf::new(),
       reason: Arc::new(vec![])
     }

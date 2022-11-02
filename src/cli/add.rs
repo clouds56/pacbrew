@@ -85,7 +85,15 @@ pub fn resolve_url(infos: &mut PackageInfos, env: &PacTree) -> Result<BTreeMap<S
         return Err(Error::Prebuilt(p.clone()));
       }
     };
-    let bottle = match bottles.files.get(&env.config.target).or_else(|| bottles.files.get("all")) {
+    let mut bottle = None;
+    for arch in vec![env.config.target.as_str(), "all"].into_iter().chain(env.config.os_fallback.iter().map(|i| i.as_str())) {
+      if let Some(b) = bottles.files.get(arch) {
+        p.arch = arch.to_string();
+        bottle = Some(b);
+        break;
+      }
+    }
+    let bottle = match bottle {
       Some(bottle) => bottle,
       None => {
         error!(@pb => "target {} not found in {:?} for {}", env.config.target, bottles.files.keys(), p.name);
@@ -93,16 +101,15 @@ pub fn resolve_url(infos: &mut PackageInfos, env: &PacTree) -> Result<BTreeMap<S
       }
     };
     // TODO: mirrors
-    p.arch = if bottles.files.contains_key(&env.config.target) {
-      env.config.target.clone()
-    } else { "all".to_string() };
+    p.rebuild = bottles.rebuild;
     p.relocate = bottle.cellar.to_string().try_into().map_err(|e: String| Error::Unimplemented(p.clone(), "relocate".to_string(), Arc::new(anyhow::anyhow!("{}", e))))?;
     p.sha256 = bottle.sha256.clone();
     if let Some(mirror) = env.config.mirror_list.first() {
       if mirror.oci {
-        p.url = format!("{}/{}/blobs/sha256:{}", mirror.url, p.name, p.sha256)
+        p.url = format!("{}/{}/blobs/sha256:{}", mirror.url, p.name.replace("@", "/"), p.sha256)
       } else {
-        p.url = format!("{}/{}-{}.{}.bottle.tar.gz", mirror.url, p.name, p.version_full, p.arch)
+        let rebuild = if p.rebuild != 0 { format!(".{}", p.rebuild)} else { "".to_string() };
+        p.url = format!("{}/{}-{}.{}.bottle{}.tar.gz", mirror.url, p.name, p.version_full, p.arch, rebuild)
       }
     } else {
       p.url = bottle.url.clone();

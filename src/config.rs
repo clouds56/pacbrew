@@ -42,6 +42,7 @@ impl Mirror {
 pub struct Config {
   #[serde(flatten)]
   pub os: Os,
+  pub os_fallback: Vec<String>,
   pub arch: Arch,
   #[serde(default, skip_serializing_if = "String::is_empty")]
   pub target: String,
@@ -73,6 +74,11 @@ impl Config {
 
   pub fn normalize(&mut self) {
     self.target = Config::build_target(&self.os, self.arch);
+    if self.os_fallback.is_empty() {
+      if let Os::Macos { version } = &self.os {
+        // TODO
+      }
+    }
     if self.root_dir.is_empty() {
       self.root_dir = "/opt/homebrew/".to_string();
     }
@@ -141,6 +147,7 @@ impl PacTree {
 fn test_config() {
   let config = Config {
     os: Os::Macos { version: "monterey".to_string() },
+    os_fallback: Vec::new(),
     arch: Arch::arm64,
     target: String::new(),
     scripts_dir: String::new(),
