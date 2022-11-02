@@ -1,4 +1,4 @@
-use std::{collections::{VecDeque, BTreeMap}, sync::Arc, path::{PathBuf, Path}};
+use std::{collections::{VecDeque, BTreeMap}, sync::Arc, path::{PathBuf, Path}, cell};
 
 use clap::Parser;
 use crate::{io::{progress::{create_pb, create_pbb}, fetch::{github_client, basic_client, check_sha256}, package::{PackageArchive, self}}, relocation::{try_open_ofile, Relocations, RelocationPattern, with_permission}};
@@ -30,6 +30,8 @@ pub enum Error {
   PackageRuby(PackageInfo, #[source] Arc<anyhow::Error>),
   #[error("package relocation: package {0:?}, file: {1}")]
   PackageRelocation(PackageInfo, String, #[source] Arc<anyhow::Error>),
+  #[error("post install: package {0:?}")]
+  PostInstall(PackageInfo, #[source] Arc<std::io::Error>),
   #[error("unimplemented: package {0:?} not implement {1}")]
   Unimplemented(PackageInfo, String, #[source] Arc<anyhow::Error>),
 }
@@ -361,6 +363,43 @@ pub fn link_packages(infos: &PackageInfos, meta: &mut BTreeMap<String, PackageMe
   Ok(())
 }
 
+pub fn post_install(infos: &PackageInfos, meta: &BTreeMap<String, PackageMeta>, env: &PacTree) -> Result<()> {
+  let mut post_install_packages = Vec::new();
+  for p in infos.values() {
+    if Path::new(&env.config.scripts_dir).join(format!("{}.sh", p.name)).exists() {
+      debug!("found {}.sh post_install", p.name);
+      post_install_packages.push(p.name.clone());
+    }
+  }
+  if post_install_packages.len() == 0 {
+    return Ok(())
+  }
+  let pb = create_pb("Post install", post_install_packages.len());
+  let root_dir = Path::new(&env.config.root_dir).canonicalize().map_err(|e| Error::Io(Path::new(&env.config.root_dir).to_path_buf(), Arc::new(e)))?.to_string_lossy().to_string();
+  let cellar_dir = Path::new(&env.config.cellar_dir).canonicalize().map_err(|e| Error::Io(Path::new(&env.config.cellar_dir).to_path_buf(), Arc::new(e)))?;
+  for name in post_install_packages {
+    let p = infos.get(&name).expect("info not present");
+    let m = meta.get(&p.name).expect("meta not present");
+    let output = std::process::Command::new("bash").arg("-c")
+      .arg(format!(r#"export PREFIX='{}';export CELLAR='{}';export PKG_NAME={};source '{}' && post_install"#,
+        root_dir,
+        cellar_dir.join(&m.keg).to_string_lossy(),
+        p.name,
+        Path::new(&env.config.scripts_dir).join(format!("{}.sh", p.name)).to_string_lossy()))
+      .output().map_err(|e| Error::PostInstall(p.clone(), Arc::new(e)))?;
+    if !output.stdout.is_empty() {
+      println!("{}", String::from_utf8_lossy(&output.stdout));
+    }
+    if !output.stderr.is_empty() {
+      println!("{}", String::from_utf8_lossy(&output.stderr));
+    }
+    pb.inc(1);
+  }
+  pb.finish();
+  Ok(())
+}
+
+
 pub fn run(opts: Opts, env: &PacTree) -> Result<()> {
   info!("adding {:?}", opts.names);
   let mut all_packages = resolve(&opts.names, env)?;
@@ -376,6 +415,7 @@ pub fn run(opts: Opts, env: &PacTree) -> Result<()> {
   unpack_packages(&all_packages, &package_meta, env)?;
   relocate_packages(&all_packages, &mut package_meta, env)?;
   link_packages(&all_packages, &mut package_meta, env)?;
+  post_install(&all_packages, &mut package_meta, env)?;
   // TODO: post install scripts
   Ok(())
 }

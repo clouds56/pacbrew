@@ -109,7 +109,9 @@ impl Task {
     // https://gist.github.com/giuliano-oliveira/4d11d6b3bb003dba3a1b53f43d81b30d
     let mut downloaded = 0;
     trace!("downloading {} to {}", self.url, self.temp.to_string_lossy());
-    let resp = self.client.get(&self.url).send().await?;
+    let request = self.client.get(&self.url);
+    trace!("req: {:?}", request);
+    let resp = request.send().await?;
     trace!("resp: {:?}", resp);
     if !resp.status().is_success() {
       anyhow::bail!("request to {} failed with {}", self.url, resp.status())

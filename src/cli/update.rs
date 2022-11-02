@@ -20,11 +20,14 @@ pub async fn check_update(client: &reqwest::Client, formula_url: &str) -> anyhow
 
 pub fn run(opts: Opts, env: &PacTree) -> anyhow::Result<()> {
   debug!("downloading from {}", env.config.formula_url);
-  let formula_url = "https://httpbin.org/get";
-  // let formula_url = env.config.formula_url.clone();
+  // let formula_url = "https://httpbin.org/get";
+  let formula_url = env.config.formula_url.clone();
   let filename = Path::new(&env.config.cache_dir).join("formula.json");
   let new_filename = Path::new(&env.config.cache_dir).join("formula.json.new");
-  let client = reqwest::Client::builder().gzip(true).deflate(true).brotli(false).user_agent("curl/7.79.1").build()?;
+  if new_filename.exists() {
+    std::fs::remove_file(new_filename.as_path()).ok();
+  }
+  let client = reqwest::Client::builder().http1_title_case_headers().http1_only().gzip(true).deflate(true).brotli(false).user_agent("Wget/1.21.3").build()?;
   let mut task = Task::new(client, formula_url, new_filename.as_path(), None, String::new());
   let pb = create_pbb("formula.json", 0);
   task.set_progress(pb.clone()).run_sync()?;

@@ -46,6 +46,8 @@ pub struct Config {
   #[serde(default, skip_serializing_if = "String::is_empty")]
   pub target: String,
   #[serde(default, skip_serializing_if = "String::is_empty")]
+  pub scripts_dir: String,
+  #[serde(default, skip_serializing_if = "String::is_empty")]
   pub root_dir: String,
   #[serde(default, skip_serializing_if = "String::is_empty")]
   pub meta_dir: String,
@@ -73,6 +75,9 @@ impl Config {
     self.target = Config::build_target(&self.os, self.arch);
     if self.root_dir.is_empty() {
       self.root_dir = "/opt/homebrew/".to_string();
+    }
+    if self.scripts_dir.is_empty() {
+      self.scripts_dir = Path::new("scripts").canonicalize().expect("scripts").to_string_lossy().to_string();
     }
     self.root_dir = self.root_dir.replace("\\", "/");
     if !self.root_dir.ends_with("/") {
@@ -138,6 +143,7 @@ fn test_config() {
     os: Os::Macos { version: "monterey".to_string() },
     arch: Arch::arm64,
     target: String::new(),
+    scripts_dir: String::new(),
     root_dir: String::new(),
     meta_dir: String::new(),
     cache_dir: String::new(),
