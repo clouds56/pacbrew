@@ -7,6 +7,8 @@ use super::{PackageInfo, PackageInfos, PackageMeta, save_package_info, RelocateM
 
 #[derive(Parser)]
 pub struct Opts {
+  #[clap(short, long)]
+  skip_unpack: bool,
   names: Vec<String>,
 }
 
@@ -310,6 +312,13 @@ pub fn link_packages(infos: &PackageInfos, meta: &mut BTreeMap<String, PackageMe
     if cellar_path.join(&bin_name).exists() {
       link_overwrite.push(bin_name);
     }
+    if cellar_path.join("lib/pkgconfig").exists() {
+      for f in std::fs::read_dir(cellar_path.join("lib/pkgconfig")).map_err(|e| Error::Io(cellar_path.join("lib/pkgconfig"), Arc::new(e)))? {
+        if let Ok(f) = f {
+          link_overwrite.push(format!("lib/pkgconfig/{}", f.file_name().to_string_lossy()));
+        }
+      }
+    }
     let mut link_param_str = "[".to_string();
     for line in brew_rb_file.lines() {
       if link_param_str != "[" {
@@ -419,8 +428,10 @@ pub fn run(opts: Opts, env: &PacTree) -> Result<()> {
   std::fs::create_dir_all(&env.config.cache_dir).map_err(|e| Error::Io(Path::new(&env.config.cache_dir).to_owned(), Arc::new(e)))?;
   download_packages(&mut all_packages, env)?;
   let mut package_meta = check_packages(&all_packages, env)?;
-  unpack_packages(&all_packages, &package_meta, env)?;
-  relocate_packages(&all_packages, &mut package_meta, env)?;
+  if !opts.skip_unpack {
+    unpack_packages(&all_packages, &package_meta, env)?;
+    relocate_packages(&all_packages, &mut package_meta, env)?;
+  }
   link_packages(&all_packages, &mut package_meta, env)?;
   post_install(&all_packages, &mut package_meta, env)?;
   // TODO: post install scripts

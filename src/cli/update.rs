@@ -40,3 +40,12 @@ pub fn run(opts: Opts, env: &PacTree) -> anyhow::Result<()> {
   }
   Ok(())
 }
+
+#[tokio::test]
+pub async fn test_reqwest() -> anyhow::Result<()> {
+  let client = reqwest::Client::builder().gzip(true).deflate(false).brotli(false).user_agent("Wget/1.21.3").build()?;
+  let resp = client.get("https://docs.rs/reqwest/latest/reqwest/").header("Accept-Encoding", "gzip").send().await?;
+  println!("encoding:{:?} length:{:?}", resp.headers().get("content-encoding"), resp.headers().get("content-length"));
+  // println!("content {}", resp.text().await?);
+  Ok(())
+}
