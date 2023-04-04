@@ -1,9 +1,16 @@
-use std::{collections::{VecDeque, BTreeMap}, sync::Arc, path::{PathBuf, Path}, cell};
+use std::{collections::{VecDeque, BTreeMap}, sync::Arc, path::{PathBuf, Path}};
 
 use clap::Parser;
-use crate::{io::{progress::{create_pb, create_pbb}, fetch::{github_client, basic_client, check_sha256}, package::{PackageArchive, self}}, relocation::{try_open_ofile, Relocations, RelocationPattern, with_permission}};
-use crate::config::PacTree;
-use super::{PackageInfo, PackageInfos, PackageMeta, save_package_info, RelocateMode};
+use crate::{
+  config::PacTree,
+  meta::{PackageInfo, PackageInfos, PackageMeta, save_package_info, RelocateMode},
+  relocation::{try_open_ofile, Relocations, RelocationPattern, with_permission},
+};
+use crate::io::{
+  progress::{create_pb, create_pbb},
+  fetch::{github_client, basic_client, check_sha256},
+  package::{PackageArchive, self}
+};
 
 #[derive(Parser)]
 pub struct Opts {

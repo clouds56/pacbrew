@@ -7,6 +7,7 @@ mod io;
 mod cli;
 pub mod config;
 pub mod formula;
+pub mod meta;
 pub mod relocation;
 
 pub use formula::Formula;
