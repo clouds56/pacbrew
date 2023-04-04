@@ -69,10 +69,15 @@ impl<R: Read + Seek> PackageArchive<R> {
     let dst = dst.as_ref();
     self.for_each(|mut entry| {
       let path = entry.path()?.strip_prefix(prefix).map_err(|_| Error::Prefix)?.to_path_buf();
-      entry.unpack(dst.join(path))?;
+      if dst.join(prefix).join(&path).exists() {
+        std::fs::remove_file(dst.join(prefix).join(&path)).ok();
+      }
+      pb.set_message(path.to_string_lossy().to_string());
+      entry.unpack_in(dst)?;
       pb.inc(entry.size());
       Ok(())
     }, false)?;
+    pb.set_message("");
     Ok(())
   }
 }

@@ -175,7 +175,7 @@ pub async fn download_packages(infos: &mut PackageInfos, env: &PacTree) -> Resul
     let client = if p.url.contains("//ghcr.io/") { github_client() } else { basic_client() };
     let mut task = Task::new(client, &p.url, &package_path, None, p.sha256.clone());
     if !package_path.exists() {
-      let pb = create_pbb(&format!("Download {}", p.name), 0);
+      let pb = create_pbb("Download", 0);
       pb.set_message(p.name.clone());
       if let Err(e) = task.set_progress(pb.clone()).run().await {
         warn!(@pb => "download {} from {} failed: {:?}", p.name, p.url, e);
@@ -237,7 +237,7 @@ pub fn unpack_packages(infos: &PackageInfos, meta: &BTreeMap<String, PackageMeta
     std::fs::create_dir_all(&dst).map_err(|e| Error::Io(dst.to_path_buf(), Arc::new(e)))?;
     let archive = PackageArchive::open(&p.pacakge_path).map_err(|e| Error::Package(p.clone(), Arc::new(e)))?;
     let pb = create_pbb(&format!("Install {}", p.name), archive.size().unwrap_or_default());
-    archive.unpack_with_pb(&pb, &m.keg, &dst).map_err(|e| Error::Package(p.clone(), Arc::new(e)))?;
+    archive.unpack_with_pb(&pb, &m.keg, &env.config.cellar_dir).map_err(|e| Error::Package(p.clone(), Arc::new(e)))?;
     let meta_path = meta_local_dir.join(&p.name).join("current");
     save_package_info(meta_path, p, m).map_err(|e| Error::PackageInfo(p.clone(), Arc::new(e)))?;
     pb.finish();
@@ -294,6 +294,19 @@ pub fn relocate_packages(infos: &PackageInfos, meta: &mut BTreeMap<String, Packa
   Ok(())
 }
 
+fn list_dir<P: AsRef<Path>>(base: P, folder: &str) -> Result<Vec<String>> {
+  let path = base.as_ref().join(folder);
+  let mut result = Vec::new();
+  if path.exists() {
+    for f in std::fs::read_dir(&path).map_err(|e| Error::Io(path, Arc::new(e)))? {
+      if let Ok(f) = f {
+        result.push(format!("{}/{}", folder, f.file_name().to_string_lossy()));
+      }
+    }
+  }
+  Ok(result)
+}
+
 pub fn link_packages(infos: &PackageInfos, meta: &mut BTreeMap<String, PackageMeta>, env: &PacTree) -> Result<()> {
   let meta_local_dir = Path::new(&env.config.meta_dir).join("local");
   std::fs::create_dir_all(&meta_local_dir).map_err(|e| Error::Io(meta_local_dir.to_path_buf(), Arc::new(e)))?;
@@ -308,17 +321,17 @@ pub fn link_packages(infos: &PackageInfos, meta: &mut BTreeMap<String, PackageMe
     let brew_rb_path = Path::new(&env.config.cellar_dir).join(p.brew_rb_file());
     let brew_rb_file = std::fs::read_to_string(&brew_rb_path).map_err(|e| Error::Io(brew_rb_path.to_path_buf(), Arc::new(e)))?;
     let mut link_overwrite = Vec::new();
-    let bin_name = format!("bin/{}", p.name.split("@").next().expect("first"));
-    if cellar_path.join(&bin_name).exists() {
-      link_overwrite.push(bin_name);
-    }
-    if cellar_path.join("lib/pkgconfig").exists() {
-      for f in std::fs::read_dir(cellar_path.join("lib/pkgconfig")).map_err(|e| Error::Io(cellar_path.join("lib/pkgconfig"), Arc::new(e)))? {
-        if let Ok(f) = f {
-          link_overwrite.push(format!("lib/pkgconfig/{}", f.file_name().to_string_lossy()));
-        }
+    let bin_name = p.name.split("@").next().expect("first");
+    for folder in ["share", "libexec"] {
+      if cellar_path.join(folder).join(&bin_name).exists() {
+        link_overwrite.push(format!("{}/{}", folder, bin_name));
       }
     }
+    link_overwrite.extend(list_dir(&cellar_path, "bin")?);
+    link_overwrite.extend(list_dir(&cellar_path, "lib")?.into_iter().filter(|i| i != "lib/pkgconfig" && i != "lib/cmake"));
+    link_overwrite.extend(list_dir(&cellar_path, "lib/pkgconfig")?);
+    link_overwrite.extend(list_dir(&cellar_path, "lib/cmake")?);
+    link_overwrite.extend(list_dir(&cellar_path, "include")?);
     let mut link_param_str = "[".to_string();
     for line in brew_rb_file.lines() {
       if link_param_str != "[" {
