@@ -15,7 +15,8 @@ pub use formula::Formula;
 #[derive(Parser)]
 pub enum Subcommand {
   Add(cli::add::Opts),
-  Update(cli::update::Opts),
+  // Update(cli::update::Opts),
+  List(cli::list::Opts),
 }
 
 fn build_aliases(formula: &[Formula]) -> BTreeMap<String, String> {
@@ -42,14 +43,14 @@ fn main() -> anyhow::Result<()> {
   debug!("config: {:?}", config);
   let formula_str = std::fs::read_to_string("cache/formula.json")?;
   let formula = serde_json::from_str::<Vec<Formula>>(&formula_str)?;
-  let env = config::PacTree {
-    aliases: build_aliases(&formula),
-    packages: formula.into_iter().map(|i| (i.full_name.clone(), i)).collect(),
-    config,
-  };
+  let mut env = config::PacTree::new(config);
+  for f in formula {
+    env.insert(f.full_name.clone(), &f);
+  }
   match sub {
     Subcommand::Add(opts) => cli::add::run(opts, &env)?,
-    Subcommand::Update(opts) => cli::update::run(opts, &env)?,
+    // Subcommand::Update(opts) => cli::update::run(opts, &env)?,
+    Subcommand::List(opts) => cli::list::run(opts, &env)?,
   }
   Ok(())
 }

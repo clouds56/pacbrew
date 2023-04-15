@@ -1,6 +1,7 @@
 use std::collections::HashMap;
 use serde::{Serialize, Deserialize};
 use serde_with::{serde_as, TryFromInto};
+use specs::{Component, DenseVecStorage};
 
 // {
 //   "name": "postgresql@14",
@@ -260,7 +261,7 @@ impl TryFrom<Reason<String>> for Reason<KegCode> {
 }
 
 #[serde_as]
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Component, Serialize, Deserialize)]
 pub struct Formula {
   pub name: String,
   pub full_name: String,

@@ -1,10 +1,11 @@
 use std::{collections::{VecDeque, BTreeMap}, sync::Arc, path::{PathBuf, Path}};
 
 use clap::Parser;
+use specs::{System, ReadStorage, WriteStorage, Read, Entity, Component, DenseVecStorage, Join};
 use crate::{
-  config::PacTree,
-  meta::{PackageInfo, PackageInfos, PackageMeta, save_package_info, RelocateMode},
-  relocation::{try_open_ofile, Relocations, RelocationPattern, with_permission},
+  config::{PacTree, PackageName, PackageMap, Config},
+  meta::{PackageInfo, PackageMeta, save_package_info, RelocateMode},
+  relocation::{try_open_ofile, Relocations, RelocationPattern, with_permission}, Formula, formula,
 };
 use crate::io::{
   progress::{create_pb, create_pbb},
@@ -22,7 +23,7 @@ pub struct Opts {
 #[derive(Debug, Clone, thiserror::Error)]
 pub enum Error {
   #[error("resolve: package {0:?} not found")]
-  Resolve(PackageInfo), // TODO: dependency path
+  Resolve(String), // TODO: dependency path
   #[error("prebuilt")]
   Prebuilt(PackageInfo),
   #[error("resolve-net")]
@@ -47,128 +48,175 @@ pub enum Error {
 
 pub type Result<T, E=Error> = std::result::Result<T, E>;
 
+#[derive(Debug, Component)]
+pub enum Stage {
+  Resolve, ResolveUrl
+}
+
 /// stage1: collect dependencies
 /// TODO: sort in topological order
-pub fn resolve(names: &[String], env: &PacTree) -> Result<PackageInfos> {
-  let mut result = PackageInfos::new();
-  let mut names = names.iter().map(|i| PackageInfo::new(i.to_string())).collect::<VecDeque<_>>();
-  while let Some(p) = names.pop_front() {
-    if result.contains_key(&p.name) {
-      continue
-    }
+pub struct ResolveDeps {
+  pub names: VecDeque<String>,
+  pub errors: Vec<Error>,
+}
+impl<'a> System<'a> for ResolveDeps {
+  type SystemData = (Read<'a, PackageMap>, ReadStorage<'a, Formula>, WriteStorage<'a, PackageInfo>, WriteStorage<'a, Stage>);
 
-    let package = match env.get_package(&p.name) {
-      Some(t) => t,
-      None => {
-        error!("cannot found {}", &p.name);
-        return Err(Error::Resolve(p))
+  fn run(&mut self, (map, formulas, mut infos, mut stages): Self::SystemData) {
+    for name in self.names.pop_front() {
+      let id = match map.0.get(&name) {
+        Some(id) => id.clone(),
+        None => {
+          error!("cannot found {}", &name);
+          self.errors.push(Error::Resolve(name.clone()));
+          continue;
+        }
+      };
+      if infos.contains(id) {
+        continue;
       }
-    };
-    // TODO: channel
-    let version = package.versions.stable.clone();
-    // TODO: check requirements
-    debug!("resolving {}:{} => {:?}", package.name, version, package.dependencies);
-    let p = p.with_name(package.full_name.to_string(), version, package.revision);
-    names.extend(p.with_dependencies(&package.dependencies));
-    result.insert(p.name.to_string(), p);
+      let Some(formula) = formulas.get(id) else {
+        self.errors.push(Error::Resolve(name.clone()));
+        continue;
+      };
+      let info = PackageInfo::new(formula.name.clone());
+      // TODO: channel
+      let version = formula.versions.stable.clone();
+      // TODO: check requirements
+      debug!("resolving {}:{} => {:?}", formula.name, version, formula.dependencies);
+      let info = info.with_name(formula.full_name.to_string(), version, formula.revision);
+      // info.with_dependencies(&formula.dependencies);
+      infos.insert(id, info);
+      self.names.extend(formula.dependencies.clone());
+      stages.insert(id, Stage::Resolve);
+    }
   }
-  Ok(result)
 }
 
-pub fn resolve_url(infos: &mut PackageInfos, env: &PacTree) -> Result<BTreeMap<String, String>> {
-  let pb = create_pb("Resolve url", infos.len());
-  let mut result = BTreeMap::new();
-  for p in infos.values_mut() {
-    pb.set_message(format!("for {}", p.name));
-    let package = match env.get_package(&p.name) {
-      Some(t) => t,
-      None => {
-        error!(@pb => "cannot found {}", &p.name);
-        return Err(Error::Resolve(p.clone()))
+pub struct ResolveUrlSystem {
+  pub names: VecDeque<String>,
+  pub errors: Vec<Error>,
+}
+impl<'a> System<'a> for ResolveUrlSystem {
+  type SystemData = (Read<'a, Option<Config>>,  Read<'a, PackageMap>,
+    ReadStorage<'a, Formula>, WriteStorage<'a, PackageInfo>, WriteStorage<'a, Stage>);
+
+  fn run(&mut self, (config, map, formulas, mut infos, stages): Self::SystemData) {
+    let config = config.as_ref().expect("config not set");
+    let pb = create_pb("Resolve url", stages.count());
+    for (formula, info, stage) in (&formulas, &mut infos, &stages).join() {
+      pb.set_message(format!("for {}", formula.name));
+
+      let bottles = match formula.bottle.get("stable") {
+        Some(bottles) => bottles,
+        None => {
+          error!(@pb => "channel stable not exists {}", &formula.name);
+          self.errors.push(Error::Prebuilt(info.clone()));
+          continue
+        }
+      };
+
+      let mut bottle = None;
+      for arch in vec![config.target.as_str(), "all"].into_iter().chain(config.os_fallback.iter().map(|i| i.as_str())) {
+        if let Some(b) = bottles.files.get(arch) {
+          info.arch = arch.to_string();
+          bottle = Some(b);
+          break;
+        }
       }
-    };
-    let bottles = match package.bottle.get("stable") {
-      Some(bottles) => bottles,
-      None => {
-        error!(@pb => "channel stable not exists {}", &p.name);
-        return Err(Error::Prebuilt(p.clone()));
-      }
-    };
-    let mut bottle = None;
-    for arch in vec![env.config.target.as_str(), "all"].into_iter().chain(env.config.os_fallback.iter().map(|i| i.as_str())) {
-      if let Some(b) = bottles.files.get(arch) {
-        p.arch = arch.to_string();
-        bottle = Some(b);
-        break;
-      }
-    }
-    let bottle = match bottle {
-      Some(bottle) => bottle,
-      None => {
-        error!(@pb => "target {} not found in {:?} for {}", env.config.target, bottles.files.keys(), p.name);
-        return Err(Error::Prebuilt(p.clone()));
-      }
-    };
-    // TODO: mirrors
-    p.rebuild = bottles.rebuild;
-    p.relocate = bottle.cellar.to_string().try_into().map_err(|e: String| Error::Unimplemented(p.clone(), "relocate".to_string(), Arc::new(anyhow::anyhow!("{}", e))))?;
-    p.sha256 = bottle.sha256.clone();
-    if let Some(mirror) = env.config.mirror_list.first() {
-      if mirror.oci {
-        p.url = format!("{}/{}/blobs/sha256:{}", mirror.url, p.name.replace("@", "/"), p.sha256)
+
+      let bottle = match bottle {
+        Some(bottle) => bottle,
+        None => {
+          error!(@pb => "target {} not found in {:?} for {}", config.target, bottles.files.keys(), info.name);
+          self.errors.push(Error::Prebuilt(info.clone()));
+          continue
+        }
+      };
+
+      // TODO: mirrors
+      info.rebuild = bottles.rebuild;
+      info.relocate = match bottle.cellar.to_string().try_into() {
+        Ok(t) => t,
+        Err(e) => {
+          self.errors.push(Error::Unimplemented(info.clone(), "relocate".to_string(), Arc::new(anyhow::anyhow!("{}", e))));
+          continue;
+        }
+      };
+      info.sha256 = bottle.sha256.clone();
+      if let Some(mirror) = config.mirror_list.first() {
+        if mirror.oci {
+          info.url = format!("{}/{}/blobs/sha256:{}", mirror.url, info.name.replace("@", "/"), info.sha256)
+        } else {
+          let rebuild = if info.rebuild != 0 { format!(".{}", info.rebuild)} else { "".to_string() };
+          info.url = format!("{}/{}-{}.{}.bottle{}.tar.gz", mirror.url, info.name, info.version_full, info.arch, rebuild)
+        }
       } else {
-        let rebuild = if p.rebuild != 0 { format!(".{}", p.rebuild)} else { "".to_string() };
-        p.url = format!("{}/{}-{}.{}.bottle{}.tar.gz", mirror.url, p.name, p.version_full, p.arch, rebuild)
+        info.url = bottle.url.clone();
       }
-    } else {
-      p.url = bottle.url.clone();
+      debug!(@pb => "url of {} ({:?}, {}) => {}", info.name, info.relocate, info.sha256, info.url);
+      // result.insert(info.name.clone(), info.url.clone());
+      pb.inc(1);
     }
-    debug!(@pb => "url of {} ({:?}, {}) => {}", p.name, p.relocate, p.sha256, p.url);
-    result.insert(p.name.clone(), p.url.clone());
-    pb.inc(1);
   }
-  pb.finish_with_message("");
-  Ok(result)
 }
 
-#[tokio::main]
-pub async fn resolve_size(infos: &mut PackageInfos, env: &PacTree) -> Result<BTreeMap<String, u64>> {
-  let pb = create_pb("Resolve size", infos.len());
-  let mut result = BTreeMap::new();
-  let cache_dir = Path::new(&env.config.cache_dir).join("pkg");
-  // TODO: true concurrent
-  for p in infos.values_mut() {
-    pb.set_message(format!("for {}", p.name));
-    // TODO: mirrors
-    p.package_name = format!("{}-{}.{}.bottle.tar.gz", p.name, p.version_full, p.arch);
-    if cache_dir.join(&p.package_name).exists() {
-      pb.set_length(pb.length().expect("length") - 1);
-      // TODO load package size
-      continue
-    }
-    let client = if p.url.contains("//ghcr.io/") { github_client() } else { basic_client() };
-    let resp = client.head(&p.url).send().await.map_err(|e| Error::ResolveNet(p.clone(), Arc::new(e)))?;
-    if resp.status().is_success() {
-      // TODO: handle error
-      // let size = resp.content_length().unwrap_or_default(); <-- this is broken, always return 0
-      let size = resp.headers().get("content-length")
-          .and_then(|i| i.to_str().ok())
-          .and_then(|i| i.parse::<u64>().ok())
-          .unwrap_or_default();
-      result.insert(p.name.to_string(), size);
-      p.size = size;
-      // TODO check partial
-      p.download_size = size;
-      debug!(@pb => "head {} => {}", &p.url, size);
-    } else {
-      warn!(@pb => "{} => {} {:?}", &p.url, resp.status(), resp.headers());
-    }
-    pb.inc(1);
-  }
-  pb.finish_with_message("");
-  Ok(result)
+pub struct ResolveSize {
+  pub errors: Vec<Error>,
 }
 
+impl<'a> System<'a> for ResolveSize {
+  type SystemData = (Read<'a, Option<Config>>,  Read<'a, PackageMap>,
+    ReadStorage<'a, Formula>, WriteStorage<'a, PackageInfo>, WriteStorage<'a, Stage>);
+
+  #[tokio::main]
+  async fn run(&mut self, (config, map, formulas, mut infos, mut stages): Self::SystemData) {
+    let config = config.as_ref().expect("config not set");
+    let pb = create_pb("Resolve size", infos.count());
+    let cache_dir = Path::new(&config.cache_dir).join("pkg");
+    for (info, stage) in (&mut infos, &mut stages).join() {
+      pb.set_message(format!("for {}", info.name));
+
+      // TODO: mirrors
+      info.package_name = format!("{}-{}.{}.bottle.tar.gz", info.name, info.version_full, info.arch);
+      if cache_dir.join(&info.package_name).exists() {
+        pb.set_length(pb.length().expect("length") - 1);
+        // TODO load package size
+        continue
+      }
+      let client = if info.url.contains("//ghcr.io/") { github_client() } else { basic_client() };
+      let resp = match client.head(&info.url).send().await {
+        Ok(resp) => resp,
+        Err(e) => {
+          self.errors.push(Error::ResolveNet(info.clone(), Arc::new(e)));
+          continue;
+        }
+      };
+      if resp.status().is_success() {
+        // TODO: handle error
+        // let size = resp.content_length().unwrap_or_default(); <-- this is broken, always return 0
+        let size = resp.headers().get("content-length")
+            .and_then(|i| i.to_str().ok())
+            .and_then(|i| i.parse::<u64>().ok())
+            .unwrap_or_default();
+        info.size = size;
+        // TODO check partial
+        info.download_size = size;
+        debug!(@pb => "head {} => {}", &info.url, size);
+      } else {
+        warn!(@pb => "{} => {} {:?}", &info.url, resp.status(), resp.headers());
+      }
+      pb.inc(1);
+    }
+    pb.finish_with_message("");
+  }
+}
+
+
+pub struct Download {
+  pub errors: Vec<Error>,
+}
+/*
 #[tokio::main]
 pub async fn download_packages(infos: &mut PackageInfos, env: &PacTree) -> Result<BTreeMap<String, PathBuf>> {
   use crate::io::fetch::Task;
@@ -364,7 +412,7 @@ pub fn link_packages(infos: &PackageInfos, meta: &mut BTreeMap<String, PackageMe
       debug!(@pb => "link package {}: {}", p.name, link);
       if !src.exists() {
         error!(@pb => "file {} not exists", cellar_path.join(link).to_string_lossy());
-        // TODO: link blob (like include/hwy/* in highway)
+        // TODO: link blob (like include/hwy/ * in highway)
         continue;
       }
       if dst.exists() || std::fs::symlink_metadata(&dst).is_ok() {
@@ -434,26 +482,32 @@ pub fn post_install(infos: &PackageInfos, meta: &BTreeMap<String, PackageMeta>, 
   pb.finish();
   Ok(())
 }
-
+*/
 
 pub fn run(opts: Opts, env: &PacTree) -> Result<()> {
   info!("adding {:?}", opts.names);
-  let mut all_packages = resolve(&opts.names, env)?;
-  info!("resolved {:?}", all_packages.keys());
+
+  let mut system = ResolveDeps { names: opts.names.clone().into(), errors: vec![] };
+  system.run(env.world.system_data());
+  // info!("resolved {:?}", all_packages.keys());
   // TODO: fallback url?
-  resolve_url(&mut all_packages, env)?;
-  resolve_size(&mut all_packages, env)?;
+  let mut system = ResolveUrlSystem { names: system.names.clone().into(), errors: vec![] };
+  system.run(env.world.system_data());
+  // resolve_url(&mut all_packages, env)?;
+  let mut system = ResolveSize { errors: vec![] };
+  system.run(env.world.system_data());
+  // resolve_size(&mut all_packages, env)?;
   // TODO: confirm and human readable
-  info!("total download {}", all_packages.values().map(|i| i.size).sum::<u64>());
-  std::fs::create_dir_all(&env.config.cache_dir).map_err(|e| Error::Io(Path::new(&env.config.cache_dir).to_owned(), Arc::new(e)))?;
-  download_packages(&mut all_packages, env)?;
-  let mut package_meta = check_packages(&all_packages, env)?;
-  if !opts.skip_unpack {
-    unpack_packages(&all_packages, &package_meta, env)?;
-    relocate_packages(&all_packages, &mut package_meta, env)?;
-  }
-  link_packages(&all_packages, &mut package_meta, env)?;
-  post_install(&all_packages, &mut package_meta, env)?;
+  // info!("total download {}", all_packages.values().map(|i| i.size).sum::<u64>());
+  // std::fs::create_dir_all(&env.config.cache_dir).map_err(|e| Error::Io(Path::new(&env.config.cache_dir).to_owned(), Arc::new(e)))?;
+  // download_packages(&mut all_packages, env)?;
+  // let mut package_meta = check_packages(&all_packages, env)?;
+  // if !opts.skip_unpack {
+  //   unpack_packages(&all_packages, &package_meta, env)?;
+  //   relocate_packages(&all_packages, &mut package_meta, env)?;
+  // }
+  // link_packages(&all_packages, &mut package_meta, env)?;
+  // post_install(&all_packages, &mut package_meta, env)?;
   // TODO: post install scripts
   Ok(())
 }

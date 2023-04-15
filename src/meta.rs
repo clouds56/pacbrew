@@ -1,10 +1,8 @@
-use std::{collections::BTreeMap, path::{PathBuf, Path}, sync::Arc};
+use std::{collections::{BTreeMap, BTreeSet}, path::{PathBuf, Path}, sync::Arc};
 
 use serde::{Serialize, Deserialize};
 use serde_with::{serde_as, TryFromInto};
-
-
-pub type PackageInfos = BTreeMap<String, PackageInfo>;
+use specs::{Component, DenseVecStorage};
 
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 pub enum RelocateMode {
@@ -38,7 +36,7 @@ impl Into<String> for RelocateMode {
   }
 }
 #[serde_as]
-#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+#[derive(Debug, Clone, Component, Serialize, Deserialize)]
 pub struct PackageInfo {
   // stage resolve
   pub name: String,
@@ -97,7 +95,7 @@ impl PackageInfo {
   }
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Component, Serialize, Deserialize)]
 pub struct PackageMeta {
   pub keg: String,
   pub explicit: bool,

@@ -1,7 +1,8 @@
 use std::{collections::BTreeMap, path::Path};
 use serde::{Deserialize, Serialize};
+use specs::{World, Entity, Component, DenseVecStorage, WorldExt, world, Builder};
 
-use crate::formula::Formula;
+use crate::{formula::Formula, meta::{PackageInfo, self}};
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "os_name", rename_all="snake_case")]
@@ -123,23 +124,46 @@ impl Config {
   }
 }
 
+#[derive(Debug, Clone, Component)]
+pub struct PackageName(pub String);
+
+#[derive(Debug, Default)]
+pub struct PackageMap(pub BTreeMap<String, Entity>);
+
 pub struct PacTree {
-  pub packages: BTreeMap<String, Formula>,
-  pub aliases: BTreeMap<String, String>,
-  pub config: Config,
+  pub world: World,
+  // pub info: Storage<PackageInfo>,
+  // pub meta: Storage<PackageMeta>,
+  // pub formula: Storage<PackageFormula>,
+
+  // pub map: BTreeMap<String, Entity>,
+  // pub config: Config,
 }
 
 impl PacTree {
-  pub fn get_package(&self, name: &str) -> Option<&Formula> {
-    if let Some(package) = self.packages.get(name) {
-      return Some(package)
+  pub fn new(config: Config) -> Self {
+    let mut world = World::new();
+    world.insert(Some(config));
+    world.insert(PackageMap(Default::default()));
+    world.register::<PackageName>();
+    world.register::<Formula>();
+    world.register::<PackageInfo>();
+    world.register::<crate::cli::add::Stage>();
+    Self { world }
+  }
+
+  pub fn insert(&mut self, name: String, formula: &Formula) -> Entity {
+    let mut aliases = formula.aliases.clone();
+    aliases.extend(formula.old_name.clone());
+    let entity = self.world.create_entity().with(PackageName(name.to_string())).with(formula.clone()).build();
+    let mut map = self.world.write_resource::<PackageMap>();
+    for name in aliases {
+      map.0.insert(name, entity);
     }
-    if let Some(package_name) = self.aliases.get(name) {
-      if let Some(package) = self.packages.get(package_name) {
-        return Some(package)
-      }
-    }
-    None
+    map.0.insert(name, entity);
+    map.0.insert(formula.name.clone(), entity);
+    map.0.insert(formula.full_name.clone(), entity);
+    entity
   }
 }
 
