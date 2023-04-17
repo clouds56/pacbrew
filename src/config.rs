@@ -1,8 +1,8 @@
 use std::{collections::BTreeMap, path::Path};
 use serde::{Deserialize, Serialize};
-use specs::{World, Entity, Component, DenseVecStorage, WorldExt, world, Builder};
+use specs::{World, Entity, Component, DenseVecStorage, WorldExt, Builder};
 
-use crate::{formula::Formula, meta::{PackageInfo, self}};
+use crate::{formula::Formula, meta::{PackageInfo, PackageMeta}};
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "os_name", rename_all="snake_case")]
@@ -143,11 +143,12 @@ pub struct PacTree {
 impl PacTree {
   pub fn new(config: Config) -> Self {
     let mut world = World::new();
-    world.insert(Some(config));
+    world.insert(config);
     world.insert(PackageMap(Default::default()));
     world.register::<PackageName>();
     world.register::<Formula>();
     world.register::<PackageInfo>();
+    world.register::<PackageMeta>();
     world.register::<crate::cli::add::Stage>();
     Self { world }
   }
@@ -164,6 +165,10 @@ impl PacTree {
     map.0.insert(formula.name.clone(), entity);
     map.0.insert(formula.full_name.clone(), entity);
     entity
+  }
+
+  pub fn config(&self) -> specs::shred::Fetch<Config> {
+    self.world.read_resource()
   }
 }
 

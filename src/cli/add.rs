@@ -1,7 +1,7 @@
 use std::{collections::{VecDeque, BTreeMap}, sync::Arc, path::{PathBuf, Path}};
 
 use clap::Parser;
-use specs::{System, ReadStorage, WriteStorage, Read, Entity, Component, DenseVecStorage, Join};
+use specs::{System, ReadStorage, WriteStorage, Read, Entity, Component, DenseVecStorage, Join, shred::PanicHandler, RunNow, Entities};
 use crate::{
   config::{PacTree, PackageName, PackageMap, Config},
   meta::{PackageInfo, PackageMeta, save_package_info, RelocateMode},
@@ -12,6 +12,35 @@ use crate::io::{
   fetch::{github_client, basic_client, check_sha256},
   package::{PackageArchive, self}
 };
+
+macro_rules! if_err {
+  ($expr:expr, @$pb:expr => $v:expr, $s:stmt) => {
+    match $expr {
+      Ok(i) => i,
+      Err(e) => {
+        error!(@$pb => "error: {}", e);
+        $v.push(e);
+        $s
+      }
+    }
+  };
+  ($expr:expr, $v:expr, $s:stmt) => {
+    match $expr {
+      Ok(i) => i,
+      Err(e) => {
+        error!("error: {}", e);
+        $v.push(e);
+        $s
+      }
+    }
+  };
+  ($expr:expr, @$pb:expr => $v:expr) => {
+    if_err!($expr, @$pb => $v, continue)
+  };
+  ($expr:expr, $v:expr) => {
+    if_err!($expr, $v, return)
+  };
+}
 
 #[derive(Parser)]
 pub struct Opts {
@@ -50,7 +79,8 @@ pub type Result<T, E=Error> = std::result::Result<T, E>;
 
 #[derive(Debug, Component)]
 pub enum Stage {
-  Resolve, ResolveUrl
+  ResolveDeps, ResolveUrl, ResolveSize,
+  Download, CheckPackages,
 }
 
 /// stage1: collect dependencies
@@ -63,14 +93,11 @@ impl<'a> System<'a> for ResolveDeps {
   type SystemData = (Read<'a, PackageMap>, ReadStorage<'a, Formula>, WriteStorage<'a, PackageInfo>, WriteStorage<'a, Stage>);
 
   fn run(&mut self, (map, formulas, mut infos, mut stages): Self::SystemData) {
-    for name in self.names.pop_front() {
-      let id = match map.0.get(&name) {
-        Some(id) => id.clone(),
-        None => {
-          error!("cannot found {}", &name);
-          self.errors.push(Error::Resolve(name.clone()));
-          continue;
-        }
+    while let Some(name) = self.names.pop_front() {
+      let Some(id) = map.0.get(&name).cloned() else {
+        error!("cannot found {}", &name);
+        self.errors.push(Error::Resolve(name.clone()));
+        continue;
       };
       if infos.contains(id) {
         continue;
@@ -86,34 +113,29 @@ impl<'a> System<'a> for ResolveDeps {
       debug!("resolving {}:{} => {:?}", formula.name, version, formula.dependencies);
       let info = info.with_name(formula.full_name.to_string(), version, formula.revision);
       // info.with_dependencies(&formula.dependencies);
-      infos.insert(id, info);
+      infos.insert(id, info).expect("insert");
       self.names.extend(formula.dependencies.clone());
-      stages.insert(id, Stage::Resolve);
+      stages.insert(id, Stage::ResolveDeps).expect("insert");
     }
   }
 }
 
 pub struct ResolveUrlSystem {
-  pub names: VecDeque<String>,
   pub errors: Vec<Error>,
 }
 impl<'a> System<'a> for ResolveUrlSystem {
-  type SystemData = (Read<'a, Option<Config>>,  Read<'a, PackageMap>,
+  type SystemData = (Read<'a, Config, PanicHandler>,
     ReadStorage<'a, Formula>, WriteStorage<'a, PackageInfo>, WriteStorage<'a, Stage>);
 
-  fn run(&mut self, (config, map, formulas, mut infos, stages): Self::SystemData) {
-    let config = config.as_ref().expect("config not set");
+  fn run(&mut self, (config, formulas, mut infos, mut stages): Self::SystemData) {
     let pb = create_pb("Resolve url", stages.count());
-    for (formula, info, stage) in (&formulas, &mut infos, &stages).join() {
+    for (formula, info, stage) in (&formulas, &mut infos, &mut stages).join() {
       pb.set_message(format!("for {}", formula.name));
 
-      let bottles = match formula.bottle.get("stable") {
-        Some(bottles) => bottles,
-        None => {
-          error!(@pb => "channel stable not exists {}", &formula.name);
-          self.errors.push(Error::Prebuilt(info.clone()));
-          continue
-        }
+      let Some(bottles) = formula.bottle.get("stable") else {
+        error!(@pb => "channel stable not exists {}", &formula.name);
+        self.errors.push(Error::Prebuilt(info.clone()));
+        continue
       };
 
       let mut bottle = None;
@@ -154,6 +176,7 @@ impl<'a> System<'a> for ResolveUrlSystem {
       } else {
         info.url = bottle.url.clone();
       }
+      *stage = Stage::ResolveUrl;
       debug!(@pb => "url of {} ({:?}, {}) => {}", info.name, info.relocate, info.sha256, info.url);
       // result.insert(info.name.clone(), info.url.clone());
       pb.inc(1);
@@ -163,16 +186,16 @@ impl<'a> System<'a> for ResolveUrlSystem {
 
 pub struct ResolveSize {
   pub errors: Vec<Error>,
+  pub size: u64,
+  pub download_size: u64,
 }
-
 impl<'a> System<'a> for ResolveSize {
-  type SystemData = (Read<'a, Option<Config>>,  Read<'a, PackageMap>,
-    ReadStorage<'a, Formula>, WriteStorage<'a, PackageInfo>, WriteStorage<'a, Stage>);
+  type SystemData = (Read<'a, Config, PanicHandler>,
+    WriteStorage<'a, PackageInfo>, WriteStorage<'a, Stage>);
 
   #[tokio::main]
-  async fn run(&mut self, (config, map, formulas, mut infos, mut stages): Self::SystemData) {
-    let config = config.as_ref().expect("config not set");
-    let pb = create_pb("Resolve size", infos.count());
+  async fn run(&mut self, (config, mut infos, mut stages): Self::SystemData) {
+    let pb = create_pb("Resolve size", stages.count());
     let cache_dir = Path::new(&config.cache_dir).join("pkg");
     for (info, stage) in (&mut infos, &mut stages).join() {
       pb.set_message(format!("for {}", info.name));
@@ -206,6 +229,9 @@ impl<'a> System<'a> for ResolveSize {
       } else {
         warn!(@pb => "{} => {} {:?}", &info.url, resp.status(), resp.headers());
       }
+      self.size += info.size;
+      self.download_size += info.download_size;
+      *stage = Stage::ResolveSize;
       pb.inc(1);
     }
     pb.finish_with_message("");
@@ -216,73 +242,84 @@ impl<'a> System<'a> for ResolveSize {
 pub struct Download {
   pub errors: Vec<Error>,
 }
+impl<'a> System<'a> for Download {
+  type SystemData = (Read<'a, Config, PanicHandler>,
+    WriteStorage<'a, PackageInfo>, WriteStorage<'a, Stage>);
+
+  #[tokio::main]
+  async fn run(&mut self, (config, mut infos, mut stages): Self::SystemData) {
+    use crate::io::fetch::Task;
+    let cache_dir = Path::new(&config.cache_dir).join("pkg");
+    if_err!(std::fs::create_dir_all(&cache_dir).map_err(|e| Error::Io(cache_dir.to_path_buf(), Arc::new(e))), self.errors, return);
+
+    // TODO show global progress bar
+    for (info, stage) in (&mut infos, &mut stages).join() {
+      let package_path = cache_dir.join(&info.package_name);
+      // TODO: reuse client
+      let client = if info.url.contains("//ghcr.io/") { github_client() } else { basic_client() };
+      let mut task = Task::new(client, &info.url, &package_path, None, info.sha256.clone());
+      if !package_path.exists() {
+        let pb = create_pbb("Download", 0);
+        pb.set_message(info.name.clone());
+        if let Err(e) = task.set_progress(pb.clone()).run().await {
+          warn!(@pb => "download {} from {} failed: {:?}", info.name, info.url, e);
+        }
+        pb.finish();
+      }
+      info.pacakge_path = package_path.clone();
+      *stage = Stage::Download;
+    }
+  }
+}
+
+
+pub struct CheckPackages {
+  pub errors: Vec<Error>,
+}
+impl<'a> System<'a> for CheckPackages {
+  type SystemData = (Entities<'a>,
+    ReadStorage<'a, PackageInfo>, WriteStorage<'a, PackageMeta>, WriteStorage<'a, Stage>);
+
+  fn run(&mut self, (ids, infos, mut metas, mut stages): Self::SystemData) {
+    let pb = create_pb("Check package", stages.count());
+    // TODO: true concurrent
+    for (id, info, stages) in (&ids, &infos, &mut stages).join() {
+      pb.set_message(format!("{}", info.name));
+
+      if_err!(check_sha256(&info.pacakge_path, &info.sha256).map_err(|e| Error::Download(info.clone(), Arc::new(e))), @pb => self.errors);
+
+      // check all files in subfolder "{p.name}/{p.version_full}"
+      // https://rust-lang-nursery.github.io/rust-cookbook/compression/tar.html
+      let mut meta = PackageMeta::new(format!("{}/{}", info.name, info.version_full));
+      let archive = if_err!(PackageArchive::open(&info.pacakge_path).map_err(|e| Error::Package(info.clone(), Arc::new(e))), @pb => self.errors);
+      let entries = if_err!(archive.entries().map_err(|e| Error::Package(info.clone(), Arc::new(e))), @pb => self.errors);
+      let mut found_brew_rb = false;
+      let brew_rb_file = info.brew_rb_file();
+      for entry in &entries {
+        if !entry.starts_with(&meta.keg) {
+          error!(@pb => "package {} contains file", entry);
+        }
+        if entry == &brew_rb_file {
+          found_brew_rb = true;
+        }
+      }
+      if !found_brew_rb {
+        warn!(@pb => "package {} doesn't contains brew {} file", info.name, brew_rb_file)
+      }
+      meta.files = entries;
+      if info.reason.is_empty() {
+        meta.explicit = true;
+      } else {
+        meta.required.push(info.reason.last().cloned().expect("last"));
+      }
+      metas.insert(id, meta).expect("insert");
+      pb.inc(1);
+      *stages = Stage::CheckPackages;
+    }
+    pb.finish_with_message("");
+  }
+}
 /*
-#[tokio::main]
-pub async fn download_packages(infos: &mut PackageInfos, env: &PacTree) -> Result<BTreeMap<String, PathBuf>> {
-  use crate::io::fetch::Task;
-  let mut result = BTreeMap::new();
-  let cache_dir = Path::new(&env.config.cache_dir).join("pkg");
-  std::fs::create_dir_all(&cache_dir).map_err(|e| Error::Io(cache_dir.to_path_buf(), Arc::new(e)))?;
-  // TODO show global progress bar
-  for p in infos.values_mut() {
-    let package_path = cache_dir.join(&p.package_name);
-    // TODO: reuse client
-    let client = if p.url.contains("//ghcr.io/") { github_client() } else { basic_client() };
-    let mut task = Task::new(client, &p.url, &package_path, None, p.sha256.clone());
-    if !package_path.exists() {
-      let pb = create_pbb("Download", 0);
-      pb.set_message(p.name.clone());
-      if let Err(e) = task.set_progress(pb.clone()).run().await {
-        warn!(@pb => "download {} from {} failed: {:?}", p.name, p.url, e);
-      }
-      pb.finish();
-    }
-    p.pacakge_path = package_path.clone();
-    result.insert(p.name.clone(), package_path);
-  }
-  Ok(result)
-}
-
-pub fn check_packages(infos: &PackageInfos, _env: &PacTree) -> Result<BTreeMap<String, PackageMeta>> {
-  let mut result = BTreeMap::new();
-  let pb = create_pb("Check package", infos.len());
-  // TODO: true concurrent
-  for p in infos.values() {
-    pb.set_message(format!("{}", p.name));
-
-    check_sha256(&p.pacakge_path, &p.sha256).map_err(|e| Error::Download(p.clone(), Arc::new(e)))?;
-
-    // check all files in subfolder "{p.name}/{p.version_full}"
-    // https://rust-lang-nursery.github.io/rust-cookbook/compression/tar.html
-    let mut meta = PackageMeta::new(format!("{}/{}", p.name, p.version_full));
-    let archive = PackageArchive::open(&p.pacakge_path).map_err(|e| Error::Package(p.clone(), Arc::new(e)))?;
-    let entries = archive.entries().map_err(|e| Error::Package(p.clone(), Arc::new(e)))?;
-    let mut found_brew_rb = false;
-    let brew_rb_file = p.brew_rb_file();
-    for entry in &entries {
-      if !entry.starts_with(&meta.keg) {
-        error!(@pb => "package {} contains file", entry);
-      }
-      if entry == &brew_rb_file {
-        found_brew_rb = true;
-      }
-    }
-    if !found_brew_rb {
-      warn!(@pb => "package {} doesn't contains brew {} file", p.name, brew_rb_file)
-    }
-    meta.files = entries;
-    if p.reason.is_empty() {
-      meta.explicit = true;
-    } else {
-      meta.required.push(p.reason.last().cloned().expect("last"));
-    }
-    result.insert(p.name.clone(), meta);
-    pb.inc(1);
-  }
-  pb.finish_with_message("");
-  Ok(result)
-}
-
 pub fn unpack_packages(infos: &PackageInfos, meta: &BTreeMap<String, PackageMeta>, env: &PacTree) -> Result<()> {
   let meta_local_dir = Path::new(&env.config.meta_dir).join("local");
   std::fs::create_dir_all(&meta_local_dir).map_err(|e| Error::Io(meta_local_dir.to_path_buf(), Arc::new(e)))?;
@@ -482,25 +519,30 @@ pub fn post_install(infos: &PackageInfos, meta: &BTreeMap<String, PackageMeta>, 
   pb.finish();
   Ok(())
 }
-*/
+// */
 
 pub fn run(opts: Opts, env: &PacTree) -> Result<()> {
   info!("adding {:?}", opts.names);
 
   let mut system = ResolveDeps { names: opts.names.clone().into(), errors: vec![] };
-  system.run(env.world.system_data());
+  system.run_now(&env.world);
   // info!("resolved {:?}", all_packages.keys());
   // TODO: fallback url?
-  let mut system = ResolveUrlSystem { names: system.names.clone().into(), errors: vec![] };
-  system.run(env.world.system_data());
+  let mut system = ResolveUrlSystem { errors: vec![] };
+  system.run_now(&env.world);
   // resolve_url(&mut all_packages, env)?;
-  let mut system = ResolveSize { errors: vec![] };
-  system.run(env.world.system_data());
+  let mut system = ResolveSize { errors: vec![], size: 0, download_size: 0 };
+  system.run_now(&env.world);
   // resolve_size(&mut all_packages, env)?;
   // TODO: confirm and human readable
-  // info!("total download {}", all_packages.values().map(|i| i.size).sum::<u64>());
-  // std::fs::create_dir_all(&env.config.cache_dir).map_err(|e| Error::Io(Path::new(&env.config.cache_dir).to_owned(), Arc::new(e)))?;
+  info!("total download {}", system.download_size);
+  std::fs::create_dir_all(&env.config().cache_dir).map_err(|e| Error::Io(Path::new(&env.config().cache_dir).to_owned(), Arc::new(e)))?;
+
+  let mut system = Download { errors: vec![] };
+  system.run_now(&env.world);
   // download_packages(&mut all_packages, env)?;
+  let mut system = CheckPackages { errors: vec![] };
+  system.run_now(&env.world);
   // let mut package_meta = check_packages(&all_packages, env)?;
   // if !opts.skip_unpack {
   //   unpack_packages(&all_packages, &package_meta, env)?;
