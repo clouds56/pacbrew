@@ -1,6 +1,7 @@
 use std::{collections::{VecDeque, BTreeMap}, sync::Arc, path::{PathBuf, Path}};
 
 use clap::Parser;
+use indicatif::ProgressBar;
 use specs::{System, ReadStorage, WriteStorage, Read, Entity, Component, DenseVecStorage, Join, shred::PanicHandler, RunNow, Entities};
 use crate::{
   config::{PacTree, PackageName, PackageMap, Config},
@@ -80,7 +81,7 @@ pub type Result<T, E=Error> = std::result::Result<T, E>;
 #[derive(Debug, Component)]
 pub enum Stage {
   ResolveDeps, ResolveUrl, ResolveSize,
-  Download, CheckPackages,
+  Download, CheckPackages, UnpackPackage, RelocatePackage,
 }
 
 /// stage1: collect dependencies
@@ -319,72 +320,122 @@ impl<'a> System<'a> for CheckPackages {
     pb.finish_with_message("");
   }
 }
-/*
-pub fn unpack_packages(infos: &PackageInfos, meta: &BTreeMap<String, PackageMeta>, env: &PacTree) -> Result<()> {
-  let meta_local_dir = Path::new(&env.config.meta_dir).join("local");
-  std::fs::create_dir_all(&meta_local_dir).map_err(|e| Error::Io(meta_local_dir.to_path_buf(), Arc::new(e)))?;
-  for p in infos.values() {
-    let m = meta.get(&p.name).expect("meta not present");
-    let dst = Path::new(&env.config.cellar_dir).join(&m.keg);
-    std::fs::create_dir_all(&dst).map_err(|e| Error::Io(dst.to_path_buf(), Arc::new(e)))?;
-    let archive = PackageArchive::open(&p.pacakge_path).map_err(|e| Error::Package(p.clone(), Arc::new(e)))?;
-    let pb = create_pbb(&format!("Install {}", p.name), archive.size().unwrap_or_default());
-    archive.unpack_with_pb(&pb, &m.keg, &env.config.cellar_dir).map_err(|e| Error::Package(p.clone(), Arc::new(e)))?;
-    let meta_path = meta_local_dir.join(&p.name).join("current");
-    save_package_info(meta_path, p, m).map_err(|e| Error::PackageInfo(p.clone(), Arc::new(e)))?;
-    pb.finish();
+
+pub struct UnpackPackages {
+  pub errors: Vec<Error>,
+}
+pub struct UnpackPackage<'a> {
+  config: &'a Config,
+  meta_local_dir: PathBuf,
+}
+impl<'a> UnpackPackage<'a> {
+  fn new(config: &'a Config) -> Result<Self, Error> {
+    let meta_local_dir = Path::new(&config.meta_dir).join("local");
+    std::fs::create_dir_all(&meta_local_dir).map_err(|e| Error::Io(meta_local_dir.to_path_buf(), Arc::new(e)))?;
+    Ok(Self { config, meta_local_dir })
   }
-  Ok(())
+  fn step(&self, info: &PackageInfo, meta: &mut PackageMeta) -> Result<(), Error> {
+    let dst = Path::new(&self.config.cellar_dir).join(&meta.keg);
+    std::fs::create_dir_all(&dst).map_err(|e| Error::Io(dst.to_path_buf(), Arc::new(e)))?;
+    let archive = PackageArchive::open(&info.pacakge_path).map_err(|e| Error::Package(info.clone(), Arc::new(e)))?;
+    let pb = create_pbb(&format!("Install {}", info.name), archive.size().unwrap_or_default());
+    archive.unpack_with_pb(&pb, &meta.keg, &self.config.cellar_dir).map_err(|e| Error::Package(info.clone(), Arc::new(e)))?;
+    let meta_path = self.meta_local_dir.join(&info.name).join("current");
+    save_package_info(meta_path, info, meta).map_err(|e| Error::PackageInfo(info.clone(), Arc::new(e)))?;
+    pb.finish();
+    Ok(())
+  }
+}
+impl<'a> System<'a> for UnpackPackages {
+  type SystemData = (Read<'a, Config, PanicHandler>,
+    WriteStorage<'a, PackageInfo>, WriteStorage<'a, PackageMeta>, WriteStorage<'a, Stage>);
+
+  fn run(&mut self, (config, infos, mut metas, mut stages): Self::SystemData) {
+    let package = UnpackPackage::new(&config).unwrap();
+    for (info, meta, stage) in (&infos, &mut metas, &mut stages).join() {
+      if let Err(e) = package.step(info, meta) {
+        self.errors.push(e)
+      }
+      *stage = Stage::UnpackPackage
+    }
+  }
 }
 
-pub fn relocate_packages(infos: &PackageInfos, meta: &mut BTreeMap<String, PackageMeta>, env: &PacTree) -> Result<()> {
-  let mut len = infos.len();
-  let meta_local_dir = Path::new(&env.config.meta_dir).join("local");
-  std::fs::create_dir_all(&meta_local_dir).map_err(|e| Error::Io(meta_local_dir.to_path_buf(), Arc::new(e)))?;
-  let relocation_pattern = RelocationPattern::new(&env.config).expect("path cannot resolved");
-  let pb = create_pb("Relocate package", infos.len());
-  for p in infos.values() {
-    if p.relocate == RelocateMode::Skip {
-      len -= 1;
-      pb.set_length(len as u64);
-      continue;
+pub struct RelocatePackages {
+  pub errors: Vec<Error>,
+}
+pub struct RelocatePackage<'a> {
+  config: &'a Config,
+  relocation_pattern: RelocationPattern,
+  meta_local_dir: PathBuf,
+  pb: ProgressBar
+}
+impl<'a> RelocatePackage<'a> {
+  pub fn new(config: &'a Config, count: usize) ->Result<Self, Error> {
+    let meta_local_dir = Path::new(&config.meta_dir).join("local");
+    std::fs::create_dir_all(&meta_local_dir).map_err(|e| Error::Io(meta_local_dir.to_path_buf(), Arc::new(e)))?;
+    let relocation_pattern = RelocationPattern::new(&config).expect("path cannot resolved");
+    let pb = create_pb("Relocate package", count);
+    Ok(Self { config, relocation_pattern, meta_local_dir, pb })
+
+  }
+  pub fn step(&self, info: &PackageInfo, meta: &mut PackageMeta) -> Result<(), Error> {
+    if info.relocate == RelocateMode::Skip {
+      let len = self.pb.length().unwrap_or_default().saturating_sub(1);
+      self.pb.set_length(len as u64);
+      return Ok(());
     }
-    let m = meta.get_mut(&p.name).expect("meta not present");
     let mut patched_binaries = Vec::new();
     let mut patched_text = Vec::new();
-    let dst = Path::new(&env.config.cellar_dir);
-    for f in &m.files {
+    let dst = Path::new(&self.config.cellar_dir);
+    for f in &meta.files {
       let filename =  dst.join(f);
       if !filename.exists() {
-        warn!(@pb => "reloc cannot open file {}", filename.to_string_lossy());
+        warn!(@self.pb => "reloc cannot open file {}", filename.to_string_lossy());
       } else if filename.is_symlink() {
         continue;
       } if let Ok(ofile) = try_open_ofile(&filename) {
-        let reloc = Relocations::from_ofile(&ofile, &relocation_pattern).map_err(|e| Error::PackageRelocation(p.clone(), f.clone(), Arc::new(e)))?;
+        let reloc = Relocations::from_ofile(&ofile, &self.relocation_pattern).map_err(|e| Error::PackageRelocation(info.clone(), f.clone(), Arc::new(e)))?;
         if !reloc.is_empty() {
-          debug!(@pb => "reloc bin {}", filename.to_string_lossy());
-          reloc.apply_file(filename).map_err(|e| Error::PackageRelocation(p.clone(), f.clone(), Arc::new(e)))?;
+          debug!(@self.pb => "reloc bin {}", filename.to_string_lossy());
+          reloc.apply_file(filename).map_err(|e| Error::PackageRelocation(info.clone(), f.clone(), Arc::new(e)))?;
           patched_binaries.push(f.clone());
         }
       } else if let Ok(text) = std::fs::read_to_string(&filename) {
-        if let Some(text) = relocation_pattern.replace_text(&text) {
-          debug!(@pb => "reloc text {}", filename.to_string_lossy());
+        if let Some(text) = self.relocation_pattern.replace_text(&text) {
+          debug!(@self.pb => "reloc text {}", filename.to_string_lossy());
           with_permission(filename.as_path(), ||
             std::fs::write(filename.as_path(), text)
           ).map_err(|e| Error::Io(filename.to_path_buf(), Arc::new(e)))?
-          .map_err(|e| Error::PackageRelocation(p.clone(), f.clone(), Arc::new(e.into())))?;
+          .map_err(|e| Error::PackageRelocation(info.clone(), f.clone(), Arc::new(e.into())))?;
           patched_text.push(f.clone());
         }
       }
     }
-    m.patched_binaries = patched_binaries;
-    m.patched_text = patched_text;
-    let meta_path = meta_local_dir.join(&p.name).join("current");
-    save_package_info(meta_path, p, m).map_err(|e| Error::PackageInfo(p.clone(), Arc::new(e)))?;
-    pb.inc(1);
+    meta.patched_binaries = patched_binaries;
+    meta.patched_text = patched_text;
+    let meta_path = self.meta_local_dir.join(&info.name).join("current");
+    save_package_info(meta_path, info, meta).map_err(|e| Error::PackageInfo(info.clone(), Arc::new(e)))?;
+    self.pb.inc(1);
+    Ok(())
   }
-  Ok(())
 }
+
+impl<'a> System<'a> for RelocatePackages {
+  type SystemData = (Read<'a, Config, PanicHandler>,
+    WriteStorage<'a, PackageInfo>, WriteStorage<'a, PackageMeta>, WriteStorage<'a, Stage>);
+
+  fn run(&mut self, (config, infos, mut metas, mut stages): Self::SystemData) {
+    let package = RelocatePackage::new(&config, 0).unwrap();
+    for (info, meta, stage) in (&infos, &mut metas, &mut stages).join() {
+      if let Err(e) = package.step(info, meta) {
+        self.errors.push(e)
+      }
+      *stage = Stage::UnpackPackage
+    }
+  }
+}
+/*
 
 fn list_dir<P: AsRef<Path>>(base: P, folder: &str) -> Result<Vec<String>> {
   let path = base.as_ref().join(folder);
@@ -544,10 +595,15 @@ pub fn run(opts: Opts, env: &PacTree) -> Result<()> {
   let mut system = CheckPackages { errors: vec![] };
   system.run_now(&env.world);
   // let mut package_meta = check_packages(&all_packages, env)?;
-  // if !opts.skip_unpack {
-  //   unpack_packages(&all_packages, &package_meta, env)?;
-  //   relocate_packages(&all_packages, &mut package_meta, env)?;
-  // }
+  if !opts.skip_unpack {
+    let mut system = UnpackPackages { errors: vec![] };
+    system.run_now(&env.world);
+    // unpack_packages(&all_packages, &package_meta, env)?;
+
+    let mut system = RelocatePackages { errors: vec![] };
+    system.run_now(&env.world);
+    // relocate_packages(&all_packages, &mut package_meta, env)?;
+  }
   // link_packages(&all_packages, &mut package_meta, env)?;
   // post_install(&all_packages, &mut package_meta, env)?;
   // TODO: post install scripts
