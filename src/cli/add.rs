@@ -82,6 +82,7 @@ pub type Result<T, E=Error> = std::result::Result<T, E>;
 pub enum Stage {
   ResolveDeps, ResolveUrl, ResolveSize,
   Download, CheckPackages, UnpackPackage, RelocatePackage,
+  LinkPackage,
 }
 
 /// stage1: collect dependencies
@@ -431,11 +432,10 @@ impl<'a> System<'a> for RelocatePackages {
       if let Err(e) = package.step(info, meta) {
         self.errors.push(e)
       }
-      *stage = Stage::UnpackPackage
+      *stage = Stage::RelocatePackage
     }
   }
 }
-/*
 
 fn list_dir<P: AsRef<Path>>(base: P, folder: &str) -> Result<Vec<String>> {
   let path = base.as_ref().join(folder);
@@ -450,21 +450,35 @@ fn list_dir<P: AsRef<Path>>(base: P, folder: &str) -> Result<Vec<String>> {
   Ok(result)
 }
 
-pub fn link_packages(infos: &PackageInfos, meta: &mut BTreeMap<String, PackageMeta>, env: &PacTree) -> Result<()> {
-  let meta_local_dir = Path::new(&env.config.meta_dir).join("local");
-  std::fs::create_dir_all(&meta_local_dir).map_err(|e| Error::Io(meta_local_dir.to_path_buf(), Arc::new(e)))?;
-  std::fs::create_dir_all(Path::new(&env.config.root_dir).join("opt")).map_err(|e| Error::Io(Path::new(&env.config.root_dir).join("opt"), Arc::new(e)))?;
-  let pb = create_pb("Link package", infos.len());
-  // TODO: true concurrent
-  for p in infos.values() {
-    pb.set_message(format!("{}", p.name));
-    let m = meta.get_mut(&p.name).expect("meta not present");
-    let cellar_path = Path::new(&env.config.cellar_dir).join(&m.keg);
+pub struct LinkPackageSystem {
+  pub errors: Vec<Error>,
+}
+
+pub struct LinkPackage<'a> {
+  config: &'a Config,
+  meta_local_dir: PathBuf,
+  pb: ProgressBar,
+}
+impl<'a> LinkPackage<'a> {
+  pub fn new(config: &'a Config, count: usize) -> Result<Self, Error> {
+    let meta_local_dir = Path::new(&config.meta_dir).join("local");
+    std::fs::create_dir_all(&meta_local_dir).map_err(|e| Error::Io(meta_local_dir.to_path_buf(), Arc::new(e)))?;
+    std::fs::create_dir_all(Path::new(&config.root_dir).join("opt")).map_err(|e| Error::Io(Path::new(&config.root_dir).join("opt"), Arc::new(e)))?;
+    let pb = create_pb("Link package", count);
+    Ok(Self {
+      config,
+      meta_local_dir,
+      pb,
+    })
+  }
+  pub fn step(&self, info: &PackageInfo, meta: &mut PackageMeta) -> Result<(), Error> {
+    self.pb.set_message(format!("{}", info.name));
+    let cellar_path = Path::new(&self.config.cellar_dir).join(&meta.keg);
     let cellar_abs_path = cellar_path.canonicalize().map_err(|e| Error::Io(cellar_path.to_path_buf(), Arc::new(e)))?;
-    let brew_rb_path = Path::new(&env.config.cellar_dir).join(p.brew_rb_file());
+    let brew_rb_path = Path::new(&self.config.cellar_dir).join(info.brew_rb_file());
     let brew_rb_file = std::fs::read_to_string(&brew_rb_path).map_err(|e| Error::Io(brew_rb_path.to_path_buf(), Arc::new(e)))?;
     let mut link_overwrite = Vec::new();
-    let bin_name = p.name.split("@").next().expect("first");
+    let bin_name = info.name.split("@").next().expect("first");
     for folder in ["share", "libexec"] {
       if cellar_path.join(folder).join(&bin_name).exists() {
         link_overwrite.push(format!("{}/{}", folder, bin_name));
@@ -488,7 +502,7 @@ pub fn link_packages(infos: &PackageInfos, meta: &mut BTreeMap<String, PackageMe
       if link_param_str != "[" {
         let s = link_param_str + "]";
         // debug!("parsing {:?}", s);
-        let s = serde_json::from_str::<Vec<String>>(&s).map_err(|e| Error::PackageRuby(p.clone(), Arc::new(e.into())))?;
+        let s = serde_json::from_str::<Vec<String>>(&s).map_err(|e| Error::PackageRuby(info.clone(), Arc::new(e.into())))?;
         link_overwrite.extend(s);
         link_param_str = "[".to_string();
       }
@@ -496,10 +510,10 @@ pub fn link_packages(infos: &PackageInfos, meta: &mut BTreeMap<String, PackageMe
     let mut links = Vec::new();
     for link in &link_overwrite {
       let src = cellar_abs_path.join(link);
-      let dst = Path::new(&env.config.root_dir).join(link);
-      debug!(@pb => "link package {}: {}", p.name, link);
+      let dst = Path::new(&self.config.root_dir).join(link);
+      debug!(@self.pb => "link package {}: {}", info.name, link);
       if !src.exists() {
-        error!(@pb => "file {} not exists", cellar_path.join(link).to_string_lossy());
+        error!(@self.pb => "file {} not exists", cellar_path.join(link).to_string_lossy());
         // TODO: link blob (like include/hwy/ * in highway)
         continue;
       }
@@ -509,7 +523,7 @@ pub fn link_packages(infos: &PackageInfos, meta: &mut BTreeMap<String, PackageMe
         symlink::remove_symlink_auto(&dst).ok();
       }
       if dst.exists() || std::fs::symlink_metadata(&dst).is_ok() {
-        error!(@pb => "file {} already exists", dst.to_string_lossy());
+        error!(@self.pb => "file {} already exists", dst.to_string_lossy());
       }
       std::fs::create_dir_all(dst.parent().expect("parent")).map_err(|e| Error::Io(dst.to_path_buf(), Arc::new(e)))?;
       if src.is_dir() {
@@ -521,56 +535,102 @@ pub fn link_packages(infos: &PackageInfos, meta: &mut BTreeMap<String, PackageMe
       }
     }
 
-    let opt_path = Path::new(&env.config.root_dir).join("opt").join(&p.name);
+    let opt_path = Path::new(&self.config.root_dir).join("opt").join(&info.name);
     if opt_path.exists() || std::fs::symlink_metadata(&opt_path).is_ok() {
       symlink::remove_symlink_auto(&opt_path).ok();
     }
     std::os::unix::fs::symlink(&cellar_abs_path, &opt_path).map_err(|e| Error::Io(opt_path.to_path_buf(), Arc::new(e)))?;
-    m.links = links;
-    let meta_path = meta_local_dir.join(&p.name).join("current");
-    save_package_info(meta_path, p, m).map_err(|e| Error::PackageInfo(p.clone(), Arc::new(e)))?;
-    pb.inc(1);
+    meta.links = links;
+    let meta_path = self.meta_local_dir.join(&info.name).join("current");
+    save_package_info(meta_path, info, meta).map_err(|e| Error::PackageInfo(info.clone(), Arc::new(e)))?;
+    self.pb.inc(1);
+    Ok(())
   }
-  pb.finish_with_message("");
-  Ok(())
 }
 
-pub fn post_install(infos: &PackageInfos, meta: &BTreeMap<String, PackageMeta>, env: &PacTree) -> Result<()> {
-  let mut post_install_packages = Vec::new();
-  for p in infos.values() {
-    if Path::new(&env.config.scripts_dir).join(format!("{}.sh", p.name)).exists() {
-      debug!("found {}.sh post_install", p.name);
-      post_install_packages.push(p.name.clone());
+
+impl<'a> System<'a> for LinkPackageSystem {
+  type SystemData = (Read<'a, Config, PanicHandler>,
+    WriteStorage<'a, PackageInfo>, WriteStorage<'a, PackageMeta>, WriteStorage<'a, Stage>);
+
+  fn run(&mut self, (config, infos, mut metas, mut stages): Self::SystemData) {
+    let package = LinkPackage::new(&config, 0).unwrap();
+    for (info, meta, stage) in (&infos, &mut metas, &mut stages).join() {
+      if let Err(e) = package.step(info, meta) {
+        self.errors.push(e)
+      }
+      *stage = Stage::LinkPackage
     }
+    package.pb.finish_with_message("");
   }
-  if post_install_packages.len() == 0 {
-    return Ok(())
+}
+
+pub struct PostInstallSystem {
+  pub errors: Vec<Error>,
+}
+
+
+pub struct PostInstall<'a> {
+  config: &'a Config,
+  root_dir: String,
+  cellar_dir: PathBuf,
+  pb: ProgressBar,
+}
+impl<'a> PostInstall<'a> {
+  pub fn new(config: &'a Config, count: usize) -> Result<Self, Error> {
+    let root_dir = Path::new(&config.root_dir).canonicalize().map_err(|e| Error::Io(Path::new(&config.root_dir).to_path_buf(), Arc::new(e)))?.to_string_lossy().to_string();
+    let cellar_dir = Path::new(&config.cellar_dir).canonicalize().map_err(|e| Error::Io(Path::new(&config.cellar_dir).to_path_buf(), Arc::new(e)))?;
+    let pb = create_pb("Post install", count);
+    Ok(Self {
+      config,
+      root_dir,
+      cellar_dir,
+      pb,
+    })
   }
-  let pb = create_pb("Post install", post_install_packages.len());
-  let root_dir = Path::new(&env.config.root_dir).canonicalize().map_err(|e| Error::Io(Path::new(&env.config.root_dir).to_path_buf(), Arc::new(e)))?.to_string_lossy().to_string();
-  let cellar_dir = Path::new(&env.config.cellar_dir).canonicalize().map_err(|e| Error::Io(Path::new(&env.config.cellar_dir).to_path_buf(), Arc::new(e)))?;
-  for name in post_install_packages {
-    let p = infos.get(&name).expect("info not present");
-    let m = meta.get(&p.name).expect("meta not present");
+  pub fn step(&self, info: &PackageInfo, meta: &PackageMeta) -> Result<(), Error> {
     let output = std::process::Command::new("bash").arg("-c")
-      .arg(format!(r#"export PREFIX='{}';export CELLAR='{}';export PKG_NAME={};source '{}' && post_install"#,
-        root_dir,
-        cellar_dir.join(&m.keg).to_string_lossy(),
-        p.name,
-        Path::new(&env.config.scripts_dir).join(format!("{}.sh", p.name)).to_string_lossy()))
-      .output().map_err(|e| Error::PostInstall(p.clone(), Arc::new(e)))?;
+    .arg(format!(r#"export PREFIX='{}';export CELLAR='{}';export PKG_NAME={};source '{}' && post_install"#,
+      self.root_dir,
+      self.cellar_dir.join(&meta.keg).to_string_lossy(),
+      info.name,
+      Path::new(&self.config.scripts_dir).join(format!("{}.sh", info.name)).to_string_lossy()))
+      .output().map_err(|e| Error::PostInstall(info.clone(), Arc::new(e)))?;
     if !output.stdout.is_empty() {
       println!("{}", String::from_utf8_lossy(&output.stdout));
     }
     if !output.stderr.is_empty() {
       println!("{}", String::from_utf8_lossy(&output.stderr));
     }
-    pb.inc(1);
+    self.pb.inc(1);
+    Ok(())
   }
-  pb.finish();
-  Ok(())
 }
-// */
+impl<'a> System<'a> for PostInstallSystem {
+  type SystemData = (Read<'a, Config, PanicHandler>,
+    WriteStorage<'a, PackageInfo>, ReadStorage<'a, PackageMeta>, WriteStorage<'a, Stage>);
+
+  fn run(&mut self, (config, infos, metas, mut stages): Self::SystemData) {
+    let mut post_install_packages = Vec::new();
+    for (info, meta) in (&infos, &metas).join() {
+      if Path::new(&config.scripts_dir).join(format!("{}.sh", info.name)).exists() {
+        debug!("found {}.sh post_install", info.name);
+        post_install_packages.push((info, meta));
+      }
+    }
+    if post_install_packages.len() == 0 {
+      return;
+    }
+    let package = PostInstall::new(&config, post_install_packages.len()).unwrap();
+    for (info, meta) in post_install_packages {
+      if let Err(e) = package.step(info, meta) {
+        self.errors.push(e)
+      }
+      // *stage = Stage::LinkPackage
+    }
+    package.pb.finish_with_message("");
+  }
+}
 
 pub fn run(opts: Opts, env: &PacTree) -> Result<()> {
   info!("adding {:?}", opts.names);
@@ -604,6 +664,8 @@ pub fn run(opts: Opts, env: &PacTree) -> Result<()> {
     system.run_now(&env.world);
     // relocate_packages(&all_packages, &mut package_meta, env)?;
   }
+  let mut system = LinkPackageSystem { errors: vec![] };
+  system.run_now(&env.world);
   // link_packages(&all_packages, &mut package_meta, env)?;
   // post_install(&all_packages, &mut package_meta, env)?;
   // TODO: post install scripts
