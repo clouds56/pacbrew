@@ -1,12 +1,12 @@
-use std::{collections::{VecDeque, BTreeMap}, sync::Arc, path::{PathBuf, Path}};
+use std::{collections::VecDeque, sync::Arc, path::{PathBuf, Path}};
 
 use clap::Parser;
 use indicatif::ProgressBar;
-use specs::{System, ReadStorage, WriteStorage, Read, Entity, Component, DenseVecStorage, Join, shred::PanicHandler, RunNow, Entities};
+use specs::{System, ReadStorage, WriteStorage, Read, Component, DenseVecStorage, Join, shred::PanicHandler, RunNow, Entities};
 use crate::{
-  config::{PacTree, PackageName, PackageMap, Config},
+  config::{PacTree, PackageMap, Config},
   meta::{PackageInfo, PackageMeta, save_package_info, RelocateMode},
-  relocation::{try_open_ofile, Relocations, RelocationPattern, with_permission}, Formula, formula,
+  relocation::{try_open_ofile, Relocations, RelocationPattern, with_permission}, Formula,
 };
 use crate::io::{
   progress::{create_pb, create_pbb},

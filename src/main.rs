@@ -15,7 +15,7 @@ pub use formula::Formula;
 #[derive(Parser)]
 pub enum Subcommand {
   Add(cli::add::Opts),
-  // Update(cli::update::Opts),
+  Update(cli::update::Opts),
   List(cli::list::Opts),
 }
 
@@ -49,7 +49,7 @@ fn main() -> anyhow::Result<()> {
   }
   match sub {
     Subcommand::Add(opts) => cli::add::run(opts, &env)?,
-    // Subcommand::Update(opts) => cli::update::run(opts, &env)?,
+    Subcommand::Update(opts) => cli::update::run(opts, &env)?,
     Subcommand::List(opts) => cli::list::run(opts, &env)?,
   }
   Ok(())

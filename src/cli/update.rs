@@ -19,11 +19,11 @@ pub async fn check_update(client: &reqwest::Client, formula_url: &str) -> anyhow
 // curl https://api.github.com/repos/testacc01/testrepo01/contents/test.txt
 
 pub fn run(opts: Opts, env: &PacTree) -> anyhow::Result<()> {
-  debug!("downloading from {}", env.config.formula_url);
+  debug!("downloading from {}", env.config().formula_url);
   // let formula_url = "https://httpbin.org/get";
-  let formula_url = env.config.formula_url.clone();
-  let filename = Path::new(&env.config.cache_dir).join("formula.json");
-  let new_filename = Path::new(&env.config.cache_dir).join("formula.json.new");
+  let formula_url = env.config().formula_url.clone();
+  let filename = Path::new(&env.config().cache_dir).join("formula.json");
+  let new_filename = Path::new(&env.config().cache_dir).join("formula.json.new");
   if new_filename.exists() {
     std::fs::remove_file(new_filename.as_path()).ok();
   }
