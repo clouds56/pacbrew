@@ -43,6 +43,22 @@ macro_rules! if_err {
   };
 }
 
+macro_rules! run_system {
+  ($world:expr => $system:expr) => {
+    {
+      let mut system = $system;
+      system.run_now(&$world);
+      if !system.errors.is_empty() {
+        for e in &system.errors {
+          error!("{}", e);
+        }
+        return Ok(());
+      }
+      system
+    }
+  };
+}
+
 #[derive(Parser)]
 pub struct Opts {
   #[clap(short, long)]
@@ -383,11 +399,11 @@ impl<'a> RelocatePackage<'a> {
 
   }
   pub fn step(&self, info: &PackageInfo, meta: &mut PackageMeta) -> Result<(), Error> {
-    if info.relocate == RelocateMode::Skip {
-      let len = self.pb.length().unwrap_or_default().saturating_sub(1);
-      self.pb.set_length(len as u64);
-      return Ok(());
-    }
+    // if info.relocate == RelocateMode::Skip {
+    //   let len = self.pb.length().unwrap_or_default().saturating_sub(1);
+    //   self.pb.set_length(len as u64);
+    //   return Ok(());
+    // }
     let mut patched_binaries = Vec::new();
     let mut patched_text = Vec::new();
     let dst = Path::new(&self.config.cellar_dir);
@@ -637,39 +653,24 @@ impl<'a> System<'a> for PostInstallSystem {
 pub fn run(opts: Opts, env: &PacTree) -> Result<()> {
   info!("adding {:?}", opts.names);
 
-  let mut system = ResolveDeps { names: opts.names.clone().into(), errors: vec![] };
-  system.run_now(&env.world);
+  run_system!(env.world => ResolveDeps { names: opts.names.clone().into(), errors: vec![]});
   // info!("resolved {:?}", all_packages.keys());
   // TODO: fallback url?
-  let mut system = ResolveUrlSystem { errors: vec![] };
-  system.run_now(&env.world);
-  // resolve_url(&mut all_packages, env)?;
-  let mut system = ResolveSize { errors: vec![], size: 0, download_size: 0 };
-  system.run_now(&env.world);
-  // resolve_size(&mut all_packages, env)?;
+  run_system!(env.world => ResolveUrlSystem { errors: vec![]});
+  let system = run_system!(env.world => ResolveSize { errors: vec![], size: 0, download_size: 0 });
+
   // TODO: confirm and human readable
   info!("total download {}", system.download_size);
   std::fs::create_dir_all(&env.config().cache_dir).map_err(|e| Error::Io(Path::new(&env.config().cache_dir).to_owned(), Arc::new(e)))?;
 
-  let mut system = Download { errors: vec![] };
-  system.run_now(&env.world);
-  // download_packages(&mut all_packages, env)?;
-  let mut system = CheckPackages { errors: vec![] };
-  system.run_now(&env.world);
-  // let mut package_meta = check_packages(&all_packages, env)?;
+  run_system!(env.world => Download { errors: vec![] });
+  run_system!(env.world => CheckPackages { errors: vec![] });
   if !opts.skip_unpack {
-    let mut system = UnpackPackages { errors: vec![] };
-    system.run_now(&env.world);
-    // unpack_packages(&all_packages, &package_meta, env)?;
-
-    let mut system = RelocatePackages { errors: vec![] };
-    system.run_now(&env.world);
-    // relocate_packages(&all_packages, &mut package_meta, env)?;
+    run_system!(env.world => UnpackPackages { errors: vec![] });
+    run_system!(env.world => RelocatePackages { errors: vec![] });
   }
-  let mut system = LinkPackageSystem { errors: vec![] };
-  system.run_now(&env.world);
-  // link_packages(&all_packages, &mut package_meta, env)?;
-  // post_install(&all_packages, &mut package_meta, env)?;
+  run_system!(env.world => LinkPackageSystem { errors: vec![] });
+  run_system!(env.world => PostInstallSystem { errors: vec![] });
   // TODO: post install scripts
   Ok(())
 }

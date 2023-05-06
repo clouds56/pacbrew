@@ -43,6 +43,7 @@ impl RelocationPattern {
     install_name.insert("@@HOMEBREW_CELLAR@@".to_string(), Self::abs_path(&config.cellar_dir)?);
     let mut extra_name = BTreeMap::new();
     extra_name.insert("@@HOMEBREW_PERL@@".to_string(), "/usr/bin/perl".to_string());
+    extra_name.insert("@@HOMEBREW_JAVA@@".to_string(), format!("{}/opt/openjdk/libexec", Self::abs_path(&config.root_dir)?));
     Ok(Self {
       install_name, extra_name,
     })
