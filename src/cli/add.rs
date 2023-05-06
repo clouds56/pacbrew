@@ -92,7 +92,9 @@ pub struct ResolveDeps {
   pub errors: Vec<Error>,
 }
 impl<'a> System<'a> for ResolveDeps {
-  type SystemData = (Read<'a, PackageMap>, ReadStorage<'a, Formula>, WriteStorage<'a, PackageInfo>, WriteStorage<'a, Stage>);
+  type SystemData = (Read<'a, PackageMap, PanicHandler>,
+    ReadStorage<'a, Formula>, WriteStorage<'a, PackageInfo>, WriteStorage<'a, Stage>
+  );
 
   fn run(&mut self, (map, formulas, mut infos, mut stages): Self::SystemData) {
     while let Some(name) = self.names.pop_front() {
@@ -101,7 +103,7 @@ impl<'a> System<'a> for ResolveDeps {
         self.errors.push(Error::Resolve(name.clone()));
         continue;
       };
-      if infos.contains(id) {
+      if stages.contains(id) {
         continue;
       }
       let Some(formula) = formulas.get(id) else {
