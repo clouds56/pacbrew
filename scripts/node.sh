@@ -5,5 +5,5 @@ post_install() {
   ln -sf $PREFIX/lib/node_modules/npm/bin/npm-cli.js $PREFIX/bin/npm
   ln -sf $PREFIX/lib/node_modules/npm/bin/npx-cli.js $PREFIX/bin/npx
 
-  echo "prefix = $PREFIX\n" > $PREFIX/lib/node_modules/npm/npmrc
+  echo "prefix = $PREFIX" > $PREFIX/lib/node_modules/npm/npmrc
 }
