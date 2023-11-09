@@ -76,8 +76,8 @@ pub enum Error {
   ResolveNet(PackageInfo, #[source] Arc<reqwest::Error>),
   #[error("download: package {0:?} failed")]
   Download(PackageInfo, #[source] Arc<anyhow::Error>),
-  #[error("io: {0:?}")]
-  Io(PathBuf, #[source] Arc<std::io::Error>),
+  #[error("io: {0:?} {1:?}")]
+  Io(Option<PackageInfo>, PathBuf, #[source] Arc<std::io::Error>),
   #[error("broken package {0:?}")]
   Package(PackageInfo, #[source] Arc<package::Error>),
   #[error("package info {0:?}")]
@@ -221,7 +221,11 @@ impl<'a> System<'a> for ResolveSize {
       pb.set_message(format!("for {}", info.name));
 
       // TODO: mirrors
-      info.package_name = format!("{}-{}.{}.bottle.tar.gz", info.name, info.version_full, info.arch);
+      info.package_name = if info.rebuild == 0 {
+        format!("{}-{}.{}.bottle.tar.gz", info.name, info.version_full, info.arch)
+      } else {
+        format!("{}-{}.{}.bottle.{}.tar.gz", info.name, info.version_full, info.arch, info.rebuild)
+      };
       if cache_dir.join(&info.package_name).exists() {
         pb.set_length(pb.length().expect("length") - 1);
         // TODO load package size
@@ -270,7 +274,7 @@ impl<'a> System<'a> for Download {
   async fn run(&mut self, (config, mut infos, mut stages): Self::SystemData) {
     use crate::io::fetch::Task;
     let cache_dir = Path::new(&config.cache_dir).join("pkg");
-    if_err!(std::fs::create_dir_all(&cache_dir).map_err(|e| Error::Io(cache_dir.to_path_buf(), Arc::new(e))), self.errors, return);
+    if_err!(std::fs::create_dir_all(&cache_dir).map_err(|e| Error::Io(None, cache_dir.to_path_buf(), Arc::new(e))), self.errors, return);
 
     // TODO show global progress bar
     for (info, stage) in (&mut infos, &mut stages).join() {
@@ -350,12 +354,12 @@ pub struct UnpackPackage<'a> {
 impl<'a> UnpackPackage<'a> {
   fn new(config: &'a Config) -> Result<Self, Error> {
     let meta_local_dir = Path::new(&config.meta_dir).join("local");
-    std::fs::create_dir_all(&meta_local_dir).map_err(|e| Error::Io(meta_local_dir.to_path_buf(), Arc::new(e)))?;
+    std::fs::create_dir_all(&meta_local_dir).map_err(|e| Error::Io(None, meta_local_dir.to_path_buf(), Arc::new(e)))?;
     Ok(Self { config, meta_local_dir })
   }
   fn step(&self, info: &PackageInfo, meta: &mut PackageMeta) -> Result<(), Error> {
     let dst = Path::new(&self.config.cellar_dir).join(&meta.keg);
-    std::fs::create_dir_all(&dst).map_err(|e| Error::Io(dst.to_path_buf(), Arc::new(e)))?;
+    std::fs::create_dir_all(&dst).map_err(|e| Error::Io(Some(info.clone()), dst.to_path_buf(), Arc::new(e)))?;
     let archive = PackageArchive::open(&info.pacakge_path).map_err(|e| Error::Package(info.clone(), Arc::new(e)))?;
     let pb = create_pbb(&format!("Install {}", info.name), archive.size().unwrap_or_default());
     archive.unpack_with_pb(&pb, &meta.keg, &self.config.cellar_dir).map_err(|e| Error::Package(info.clone(), Arc::new(e)))?;
@@ -392,7 +396,7 @@ pub struct RelocatePackage<'a> {
 impl<'a> RelocatePackage<'a> {
   pub fn new(config: &'a Config, count: usize) ->Result<Self, Error> {
     let meta_local_dir = Path::new(&config.meta_dir).join("local");
-    std::fs::create_dir_all(&meta_local_dir).map_err(|e| Error::Io(meta_local_dir.to_path_buf(), Arc::new(e)))?;
+    std::fs::create_dir_all(&meta_local_dir).map_err(|e| Error::Io(None, meta_local_dir.to_path_buf(), Arc::new(e)))?;
     let relocation_pattern = RelocationPattern::new(&config).expect("path cannot resolved");
     let pb = create_pb("Relocate package", count);
     Ok(Self { config, relocation_pattern, meta_local_dir, pb })
@@ -425,7 +429,7 @@ impl<'a> RelocatePackage<'a> {
           debug!(@self.pb => "reloc text {}", filename.to_string_lossy());
           with_permission(filename.as_path(), ||
             std::fs::write(filename.as_path(), text)
-          ).map_err(|e| Error::Io(filename.to_path_buf(), Arc::new(e)))?
+          ).map_err(|e| Error::Io(Some(info.clone()), filename.to_path_buf(), Arc::new(e)))?
           .map_err(|e| Error::PackageRelocation(info.clone(), f.clone(), Arc::new(e.into())))?;
           patched_text.push(f.clone());
         }
@@ -459,7 +463,7 @@ fn list_dir<P: AsRef<Path>>(base: P, folder: &str) -> Result<Vec<String>> {
   let path = base.as_ref().join(folder);
   let mut result = Vec::new();
   if path.exists() {
-    for f in std::fs::read_dir(&path).map_err(|e| Error::Io(path, Arc::new(e)))? {
+    for f in std::fs::read_dir(&path).map_err(|e| Error::Io(None, path, Arc::new(e)))? {
       if let Ok(f) = f {
         result.push(format!("{}/{}", folder, f.file_name().to_string_lossy()));
       }
@@ -480,8 +484,8 @@ pub struct LinkPackage<'a> {
 impl<'a> LinkPackage<'a> {
   pub fn new(config: &'a Config, count: usize) -> Result<Self, Error> {
     let meta_local_dir = Path::new(&config.meta_dir).join("local");
-    std::fs::create_dir_all(&meta_local_dir).map_err(|e| Error::Io(meta_local_dir.to_path_buf(), Arc::new(e)))?;
-    std::fs::create_dir_all(Path::new(&config.root_dir).join("opt")).map_err(|e| Error::Io(Path::new(&config.root_dir).join("opt"), Arc::new(e)))?;
+    std::fs::create_dir_all(&meta_local_dir).map_err(|e| Error::Io(None, meta_local_dir.to_path_buf(), Arc::new(e)))?;
+    std::fs::create_dir_all(Path::new(&config.root_dir).join("opt")).map_err(|e| Error::Io(None, Path::new(&config.root_dir).join("opt"), Arc::new(e)))?;
     let pb = create_pb("Link package", count);
     Ok(Self {
       config,
@@ -492,9 +496,9 @@ impl<'a> LinkPackage<'a> {
   pub fn step(&self, info: &PackageInfo, meta: &mut PackageMeta) -> Result<(), Error> {
     self.pb.set_message(format!("{}", info.name));
     let cellar_path = Path::new(&self.config.cellar_dir).join(&meta.keg);
-    let cellar_abs_path = cellar_path.canonicalize().map_err(|e| Error::Io(cellar_path.to_path_buf(), Arc::new(e)))?;
+    let cellar_abs_path = cellar_path.canonicalize().map_err(|e| Error::Io(Some(info.clone()), cellar_path.to_path_buf(), Arc::new(e)))?;
     let brew_rb_path = Path::new(&self.config.cellar_dir).join(info.brew_rb_file());
-    let brew_rb_file = std::fs::read_to_string(&brew_rb_path).map_err(|e| Error::Io(brew_rb_path.to_path_buf(), Arc::new(e)))?;
+    let brew_rb_file = std::fs::read_to_string(&brew_rb_path).map_err(|e| Error::Io(Some(info.clone()), brew_rb_path.to_path_buf(), Arc::new(e)))?;
     let mut link_overwrite = Vec::new();
     let bin_name = info.name.split("@").next().expect("first");
     for folder in ["share", "libexec"] {
@@ -543,12 +547,12 @@ impl<'a> LinkPackage<'a> {
       if dst.exists() || std::fs::symlink_metadata(&dst).is_ok() {
         error!(@self.pb => "file {} already exists", dst.to_string_lossy());
       }
-      std::fs::create_dir_all(dst.parent().expect("parent")).map_err(|e| Error::Io(dst.to_path_buf(), Arc::new(e)))?;
+      std::fs::create_dir_all(dst.parent().expect("parent")).map_err(|e| Error::Io(Some(info.clone()), dst.to_path_buf(), Arc::new(e)))?;
       if src.is_dir() {
-        std::os::unix::fs::symlink(&src, &dst).map_err(|e| Error::Io(dst.to_path_buf(), Arc::new(e)))?;
+        std::os::unix::fs::symlink(&src, &dst).map_err(|e| Error::Io(Some(info.clone()), dst.to_path_buf(), Arc::new(e)))?;
         links.push(link.trim_end_matches('/').to_string() + "/");
       } else {
-        std::os::unix::fs::symlink(&src, &dst).map_err(|e| Error::Io(dst.to_path_buf(), Arc::new(e)))?;
+        std::os::unix::fs::symlink(&src, &dst).map_err(|e| Error::Io(Some(info.clone()), dst.to_path_buf(), Arc::new(e)))?;
         links.push(link.to_string());
       }
     }
@@ -557,7 +561,7 @@ impl<'a> LinkPackage<'a> {
     if opt_path.exists() || std::fs::symlink_metadata(&opt_path).is_ok() {
       symlink::remove_symlink_auto(&opt_path).ok();
     }
-    std::os::unix::fs::symlink(&cellar_abs_path, &opt_path).map_err(|e| Error::Io(opt_path.to_path_buf(), Arc::new(e)))?;
+    std::os::unix::fs::symlink(&cellar_abs_path, &opt_path).map_err(|e| Error::Io(Some(info.clone()), opt_path.to_path_buf(), Arc::new(e)))?;
     meta.links = links;
     let meta_path = self.meta_local_dir.join(&info.name).join("current");
     save_package_info(meta_path, info, meta).map_err(|e| Error::PackageInfo(info.clone(), Arc::new(e)))?;
@@ -596,8 +600,8 @@ pub struct PostInstall<'a> {
 }
 impl<'a> PostInstall<'a> {
   pub fn new(config: &'a Config, count: usize) -> Result<Self, Error> {
-    let root_dir = Path::new(&config.root_dir).canonicalize().map_err(|e| Error::Io(Path::new(&config.root_dir).to_path_buf(), Arc::new(e)))?.to_string_lossy().to_string();
-    let cellar_dir = Path::new(&config.cellar_dir).canonicalize().map_err(|e| Error::Io(Path::new(&config.cellar_dir).to_path_buf(), Arc::new(e)))?;
+    let root_dir = Path::new(&config.root_dir).canonicalize().map_err(|e| Error::Io(None, Path::new(&config.root_dir).to_path_buf(), Arc::new(e)))?.to_string_lossy().to_string();
+    let cellar_dir = Path::new(&config.cellar_dir).canonicalize().map_err(|e| Error::Io(None, Path::new(&config.cellar_dir).to_path_buf(), Arc::new(e)))?;
     let pb = create_pb("Post install", count);
     Ok(Self {
       config,
@@ -661,7 +665,7 @@ pub fn run(opts: Opts, env: &PacTree) -> Result<()> {
 
   // TODO: confirm and human readable
   info!("total download {}", system.download_size);
-  std::fs::create_dir_all(&env.config().cache_dir).map_err(|e| Error::Io(Path::new(&env.config().cache_dir).to_owned(), Arc::new(e)))?;
+  std::fs::create_dir_all(&env.config().cache_dir).map_err(|e| Error::Io(None, Path::new(&env.config().cache_dir).to_owned(), Arc::new(e)))?;
 
   run_system!(env.world => Download { errors: vec![] });
   run_system!(env.world => CheckPackages { errors: vec![] });
