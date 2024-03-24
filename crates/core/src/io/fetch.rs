@@ -1,5 +1,5 @@
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use crate::{error::{Error, ErrorExt, Result}, progress::{Events, Progress, ProgressTrack}};
 
 use futures::StreamExt as _;
@@ -56,6 +56,7 @@ impl DownloadTask {
     tmp
   }
 
+  #[tracing::instrument(level = "debug", skip_all, fields(url = %self.url.as_str(), path = %self.filename.to_string_lossy()))]
   pub async fn run(&self) -> Result<DownloadState> {
     if !self.force && self.filename.exists() {
       let length = self.filename.metadata().when(("metadata", &self.filename))?.len();
@@ -72,6 +73,7 @@ impl DownloadTask {
       let bytes = bytes.when(&self)?;
       partial_len += bytes.len() as u64;
       file.write_all(&bytes).await.when(("write", &tmp_filename))?;
+      debug!(tracker=self.tracker.is_some(), partial_len);
       if let Some(tracker) = &self.tracker {
         tracker.send(DownloadState { current: partial_len as u64, max: length });
       }
@@ -88,12 +90,12 @@ fn into_url(url: impl IntoUrl) -> Result<Url> {
 }
 
 /// download json api from https://formulae.brew.sh/api/formula.json
-pub async fn download_db<U: IntoUrl, P: Into<PathBuf>>(url: U, path: P) -> Result<(JoinHandle<()>, Events<DownloadState>)> {
+#[tracing::instrument(level = "debug", skip(url, path), fields(url = %url.as_str(), path = %path.as_ref().to_string_lossy()))]
+pub async fn download_db<U: IntoUrl, P: AsRef<Path>>(url: U, path: P) -> Result<(JoinHandle<()>, Events<DownloadState>)> {
   let url = url.as_str();
-  let filename = path.into();
-  info!("update formula db from {}", url);
+  let filename = path.as_ref();
   let mut task = DownloadTask::new(url, filename, None)?;
-  let events = task.tracker.take().unwrap().progress();
+  let events = task.tracker.as_ref().unwrap().progress();
   let handle = tokio::spawn(async move {
     let _ = task.force(true).run().await;
   });
@@ -102,12 +104,17 @@ pub async fn download_db<U: IntoUrl, P: Into<PathBuf>>(url: U, path: P) -> Resul
 
 #[tokio::test]
 async fn test_download_db() {
-  // download_db("https://formulae.brew.sh/api/formula.json", "formula.json").await.unwrap();
-  let (handle, mut events) = download_db("https://example.com", "example.html").await.unwrap();
+  crate::tests::init_logger();
+
+  let target = "example.html";
+
+  // let (handle, mut events) = download_db("https://formulae.brew.sh/api/formula.json", "formula.json").await.unwrap();
+  let (handle, mut events) = download_db("https://example.com", target).await.unwrap();
   while let Some(event) = events.recv().await {
-    println!("{:?}", event);
+    info!(?event);
   }
   handle.await.unwrap();
-  assert!(std::path::Path::new("formula.json").exists());
-  // std::fs::remove_file("formula.json").unwrap();
+  assert!(Path::new(target).exists());
+  info!(len=%std::fs::metadata(target).unwrap().len());
+  std::fs::remove_file(target).unwrap();
 }

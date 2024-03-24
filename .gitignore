@@ -1,6 +1,10 @@
 .DS_Store
 /target
 /Cargo.lock
-formula.json
+/formula.json
+
+crates/**/*.tmp
+crates/**/formula.json
+
 /cache/*
 !/cache/pactree.conf
