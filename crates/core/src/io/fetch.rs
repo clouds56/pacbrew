@@ -73,7 +73,7 @@ impl DownloadTask {
       let bytes = bytes.when(&self)?;
       partial_len += bytes.len() as u64;
       file.write_all(&bytes).await.when(("write", &tmp_filename))?;
-      debug!(tracker=self.tracker.is_some(), partial_len);
+      // debug!(tracker=self.tracker.is_some(), partial_len);
       if let Some(tracker) = &self.tracker {
         tracker.send(DownloadState { current: partial_len as u64, max: length });
       }
@@ -106,12 +106,17 @@ pub async fn download_db<U: IntoUrl, P: AsRef<Path>>(url: U, path: P) -> Result<
 async fn test_download_db() {
   crate::tests::init_logger();
 
-  let target = "example.html";
+  let url = std::env::var("TEST_DOWNLOAD_URL").unwrap_or("https://example.com".to_string());
+  // let url = "https://formulae.brew.sh/api/formula.json".to_string();
+  let target = url.rsplit('/').next().unwrap();
 
-  // let (handle, mut events) = download_db("https://formulae.brew.sh/api/formula.json", "formula.json").await.unwrap();
-  let (handle, mut events) = download_db("https://example.com", target).await.unwrap();
+  let (handle, mut events) = download_db(&url, target).await.unwrap();
+  let pb = indicatif::ProgressBar::new(100);
+  crate::tests::ACTIVE_PB.write().unwrap().replace(crate::pb::Suspendable::ProgressBar(pb.clone()));
   while let Some(event) = events.recv().await {
-    info!(?event);
+    pb.set_length(event.max);
+    pb.set_position(event.current);
+    info!(message="recv", event.current, event.max);
   }
   handle.await.unwrap();
   assert!(Path::new(target).exists());
