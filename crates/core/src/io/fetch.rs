@@ -94,11 +94,9 @@ async fn test_download_db() {
   let req = FetchReq::Api("formula.json".to_string());
   let target = req.target(CACHE_PATH);
   info!(%req, target=%target.display());
-  let mirrors = MirrorLists {
-    lists: vec![MirrorServer::new(MIRROR.0, MIRROR.1)]
-  };
+  let mirrors = get_mirrors();
 
-  crate::ui::with_progess_bar(active_pb, FetchState::default(), |tracker| async {
+  crate::ui::with_progess_bar(active_pb, None, FetchState::default(), |tracker| async {
     fetch_remote(&mirrors, FetchReq::Api("formula.json".to_string()), &target, tracker).await
   }, ()).await.unwrap();
   assert!(target.exists());

@@ -20,7 +20,7 @@ mod tests {
 
   pub fn get_mirrors() -> MirrorLists {
     MirrorLists {
-      lists: vec![MirrorServer::new(MIRROR.0, MIRROR.1)]
+      lists: vec![MirrorServer::new(MIRROR.0, MIRROR.1, None)]
     }
   }
 

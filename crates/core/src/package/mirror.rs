@@ -12,11 +12,11 @@ pub struct MirrorServer {
 }
 
 impl MirrorServer {
-  pub fn new(server_type: MirrorType, base_url: &str) -> Self {
+  pub fn new(server_type: MirrorType, base_url: &str, api_base_url: Option<&str>) -> Self {
     if server_type == MirrorType::Ghcr {
       warn!("should not use ghcr with custom base_url, please use MirrorServer::ghcr() instead");
     }
-    Self { server_type, base_url: base_url.to_string(), api_base_url: None }
+    Self { server_type, base_url: base_url.to_string(), api_base_url: api_base_url.map(|s| s.to_string()) }
   }
   pub fn ghcr() -> Self {
     Self {

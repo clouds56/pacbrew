@@ -87,7 +87,13 @@ impl<T: FeedBar> EventListener<T> for ProgressBar {
   }
 }
 
-pub async fn with_progess_bar<'a, T, R, F, Fut>(active: ActiveSuspendable, init: T, f: F, tracker: impl EventListener<T>) -> R
+pub async fn with_progess_bar<'a, T, R, F, Fut>(
+  active: ActiveSuspendable,
+  style: Option<ProgressStyle>,
+  init: T,
+  f: F,
+  tracker: impl EventListener<T>,
+) -> R
 where
   T: Clone + 'static + FeedBar,
   F: FnOnce(Tracker<T>) -> Fut + 'a,
@@ -101,7 +107,7 @@ where
     >(Box::pin(f))
   }
   let pb = ProgressBar::new(0);
-  if let Some(style) = T::style() {
+  if let Some(style) = style.or_else(|| T::style()) {
     pb.set_style(style);
   }
   let old = active.write().unwrap().replace(Suspendable::ProgressBar(pb.clone()));

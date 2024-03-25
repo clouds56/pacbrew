@@ -61,7 +61,7 @@ async fn test_resolve() {
   let formulas = get_formulas();
 
   let init = Event { name: String::new(), current: 0, max: Some(query.len()) };
-  let result = crate::ui::with_progess_bar(active_pb.clone(), init, |tracker| async move {
+  let result = crate::ui::with_progess_bar(active_pb.clone(), None, init, |tracker| async move {
     exec(&formulas, query, tracker).await
   }, ()).await.unwrap();
 
