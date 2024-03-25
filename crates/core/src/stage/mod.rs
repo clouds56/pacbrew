@@ -1,6 +1,7 @@
 pub mod resolve;
 pub mod probe;
 pub mod download;
+pub mod update_db;
 
 #[derive(Debug, Clone)]
 pub struct Event {
