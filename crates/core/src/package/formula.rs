@@ -140,6 +140,9 @@ pub struct UrlInfo {
   pub tag: Option<String>,
   /// git revision
   pub revision: Option<String>,
+  pub using: Option<String>,
+  /// no checksum for git
+  pub checksum: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -157,6 +160,10 @@ pub struct Bottle {
 pub struct Bottles {
   pub rebuild: usize,
   pub root_url: String,
+  /// possible keys:
+  /// arm64_sonoma, arm64_ventura, arm64_monterey,
+  /// sonoma, ventura, monterey,
+  /// x86_64_linux,
   pub files: HashMap<String, Bottle>,
 }
 
@@ -273,10 +280,14 @@ pub struct Formula {
   pub license: Option<String>,
   pub homepage: String,
   pub versions: Versions,
+  /// possible keys: stable
   pub urls: HashMap<String, UrlInfo>,
   pub revision: usize,
   pub version_scheme: usize,
+  /// keys match urls
   pub bottle: HashMap<String, Bottles>,
+  /// possible keys: clt_installed
+  pub pour_bottle_only_if: Option<String>, // TODO enum?
   pub keg_only: bool,
   #[serde_as(as = "Option<TryFromInto<Reason<String>>>")]
   pub keg_only_reason: Option<Reason<KegCode>>,
@@ -288,10 +299,23 @@ pub struct Formula {
   pub recommended_dependencies: Dependencies,
   pub optional_dependencies: Dependencies,
   pub uses_from_macos: Vec<FromMacOS>, // TODO: add prefix: macos_
+  /// possible keys: since
+  pub uses_from_macos_bounds: Vec<HashMap<String, String>>,
   /// mostly arch
   pub requirements: Vec<Requirement>,
   pub conflicts_with: Dependencies,
+  // pub conflicts_with_reasons: Vec<??>,
+  pub link_overwrite: Vec<String>,
   pub caveats: Option<String>,
+  pub deprecated: bool,
+  pub deprecation_date: Option<String>,
+  pub deprecation_reason: Option<String>,
+  pub disabled: bool,
+  pub disable_date: Option<String>,
+  pub disable_reason: Option<String>,
+  pub post_install_defined: bool,
+  // possible keys: run
+  // pub service: Option<Services>,
 }
 
 #[test]

@@ -7,6 +7,8 @@ use reqwest::{IntoUrl, Url};
 use tokio::{io::AsyncWriteExt as _, task::JoinHandle};
 use tracing::Instrument;
 
+use super::read::tmp_path;
+
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct DownloadState {
   pub current: u64,
@@ -48,16 +50,7 @@ impl DownloadTask {
     self
   }
 
-  /// append .tmp suffix to self.filename
-  pub fn tmp_file(&self) -> PathBuf {
-    let mut tmp = self.filename.clone();
-    let mut stem = tmp.file_name().unwrap_or_default().to_os_string();
-    stem.push(".tmp");
-    tmp.set_file_name(stem);
-    tmp
-  }
-
-  #[tracing::instrument(level = "debug", skip_all, fields(url = %self.url.as_str(), path = %self.filename.to_string_lossy()))]
+  #[tracing::instrument(level = "trace", skip_all, fields(url = %self.url.as_str(), path = %self.filename.to_string_lossy()))]
   pub async fn run(&self) -> Result<DownloadState> {
     if !self.force && self.filename.exists() {
       let length = self.filename.metadata().when(("metadata", &self.filename))?.len();
@@ -67,7 +60,8 @@ impl DownloadTask {
     let resp = client.get(self.url.clone()).send().await.when(&self)?;
     let length = resp.content_length().unwrap_or(0);
     let mut partial_len = 0;
-    let tmp_filename = self.tmp_file();
+    let tmp_filename = tmp_path(&self.filename, ".part");
+    debug!(message="download_to", tmp_filename=%tmp_filename.display());
     let mut file = tokio::fs::File::create(&tmp_filename).await.when(("create", &tmp_filename))?;
     let mut stream = resp.bytes_stream();
     while let Some(bytes) = stream.next().await {
@@ -80,6 +74,7 @@ impl DownloadTask {
       }
     }
     file.sync_all().await.when(("sync", &tmp_filename))?;
+    debug!(message="rename", from=%tmp_filename.display(), to=%self.filename.display());
     tokio::fs::rename(&tmp_filename, &self.filename).await.when(("rename", &self.filename))?;
     Ok(DownloadState { current: partial_len, max: length })
   }

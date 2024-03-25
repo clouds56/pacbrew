@@ -18,11 +18,25 @@ pub enum Error {
     #[source]
     error: std::io::Error,
   },
-  #[error("serde_json: expect {expect_type}, caused by: {error}")]
+  #[error("serde_json: cannot {action} {expect_type} context: {context:?}, caused by: {error}")]
   SerdeJson {
+    action: &'static str,
     expect_type: String,
+    context: Option<String>,
     #[source]
     error: serde_json::Error,
+  },
+  #[error("serde_toml: cannot ser {expect_type}, caused by: {error}")]
+  SerdeTomlSer {
+    expect_type: String,
+    #[source]
+    error: toml::ser::Error,
+  },
+  #[error("serde_toml: cannot de {expect_type}, caused by: {error}")]
+  SerdeTomlDe {
+    expect_type: String,
+    #[source]
+    error: toml::de::Error,
   },
   #[error("malformed url {}", .0)]
   MalformedUrl(String),
@@ -49,9 +63,40 @@ impl<'a, T> ErrorExt<'a, T, std::io::Error> for StdResult<T, std::io::Error> {
   }
 }
 
+fn get_context(source: &str, line: usize, col: usize) -> Option<String> {
+  let s = source.lines().skip(line.saturating_sub(1)).next()?;
+  if s.len() > 100 {
+    if col >= s.len() { return None }
+    let start = col.saturating_sub(50);
+    let end = col.saturating_add(50).min(s.len());
+    Some(format!("{} ^^^here^^^ {}", &s[start..col], &s[col..end]))
+  } else {
+    Some(s.to_string())
+  }
+}
+
 impl<'a, T> ErrorExt<'a, T, serde_json::Error> for StdResult<T, serde_json::Error> {
-  type Ctx = &'a str;
-  fn when(self, expect_type: Self::Ctx) -> Result<T, Error> {
-    self.map_err(|error| Error::SerdeJson { expect_type: expect_type.to_string(), error })
+  type Ctx = (&'static str, &'a str, Option<&'a str>);
+  fn when(self, (action, expect_type, source): Self::Ctx) -> Result<T, Error> {
+    self.map_err(|error| {
+      let context = source.and_then(|source| get_context(source, error.line(), error.column())).map(|i| i.to_string());
+      Error::SerdeJson { action, expect_type: expect_type.to_string(), error, context }
+    })
+  }
+}
+
+impl<'a, T> ErrorExt<'a, T, toml::ser::Error> for StdResult<T, toml::ser::Error> {
+  type Ctx = (&'static str, &'a str);
+  fn when(self, (action, expect_type): Self::Ctx) -> Result<T, Error> {
+    if action != "ser" { warn!(message="should be ser", action) }
+    self.map_err(|error| Error::SerdeTomlSer { expect_type: expect_type.to_string(), error })
+  }
+}
+
+impl<'a, T> ErrorExt<'a, T, toml::de::Error> for StdResult<T, toml::de::Error> {
+  type Ctx = (&'static str, &'a str);
+  fn when(self, (action, expect_type): Self::Ctx) -> Result<T, Error> {
+    if action != "de" { warn!(message="should be de", action) }
+    self.map_err(|error| Error::SerdeTomlDe { expect_type: expect_type.to_string(), error })
   }
 }
