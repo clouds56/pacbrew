@@ -9,7 +9,7 @@ pub struct Package {
 }
 
 #[derive(Clone, serde::Serialize, serde::Deserialize)]
-pub struct ArchUrl {
+pub struct PkgBuild {
   pub arch: String,
   pub rebuild: u32,
   pub filename: String,
@@ -17,9 +17,9 @@ pub struct ArchUrl {
   pub sha256: String,
 }
 
-impl std::fmt::Debug for ArchUrl {
+impl std::fmt::Debug for PkgBuild {
   fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-    f.debug_struct("ArchUrl")
+    f.debug_struct("PkgBuild")
       .field("arch", &self.arch)
       .field("rebuild", &self.rebuild)
       .field("filename", &self.filename)
@@ -37,7 +37,7 @@ pub struct PackageOffline {
   pub desc: String,
   pub license: Option<String>,
   pub deps: Vec<String>,
-  pub tar: Vec<ArchUrl>,
+  pub tar: Vec<PkgBuild>,
   pub link_overwrite: Vec<String>,
 }
 
@@ -46,7 +46,7 @@ impl From<Formula> for PackageOffline {
     let version_full = Self::version_full_(&f.versions.stable, f.revision);
     let tar = f.bottle.get("stable").iter().flat_map(|i| i.files.iter().map(|(s, t)| (s, *i, t)))
       .map(|(arch, meta, bottle)|
-        ArchUrl {
+        PkgBuild {
           arch: arch.to_string(),
           rebuild: meta.rebuild,
           filename: if meta.rebuild == 0 {
@@ -84,7 +84,7 @@ impl PackageOffline {
     }
   }
 
-  pub fn find_arch(&self, arch: &str) -> Option<&ArchUrl> {
+  pub fn find_arch(&self, arch: &str) -> Option<&PkgBuild> {
     // TODO: arch to enum, and fallback
     self.tar.iter().find(|i| i.arch == arch)
       .or_else(|| self.tar.iter().find(|i| i.arch == "all"))

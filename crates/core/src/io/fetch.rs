@@ -34,6 +34,7 @@ impl<T> ErrorDownloadExt<T> for Result<T, reqwest::Error> {
 /// it would first download to filename.tmp, then rename to filename.
 #[derive(Debug)]
 pub struct DownloadTask {
+  pub client: Option<reqwest::Client>,
   pub url: Url,
   pub filename: PathBuf,
   pub sha256: Option<String>,
@@ -43,6 +44,7 @@ pub struct DownloadTask {
 impl Clone for DownloadTask {
   fn clone(&self) -> Self {
     Self {
+      client: self.client.clone(),
       url: self.url.clone(),
       filename: self.filename.clone(),
       sha256: self.sha256.clone(),
@@ -55,7 +57,12 @@ impl DownloadTask {
   pub fn new<U: IntoUrl, P: Into<PathBuf>>(url: U, filename: P, sha256: Option<String>) -> Result<Self> {
     let url = into_url(url)?;
     let filename = filename.into();
-    Ok(Self { url, filename, sha256, force: false })
+    Ok(Self { client: None, url, filename, sha256, force: false })
+  }
+
+  pub fn client(&mut self, client: Option<reqwest::Client>) -> &mut Self {
+    self.client = client;
+    self
   }
 
   pub fn force(&mut self, force: bool) -> &mut Self {
@@ -69,7 +76,7 @@ impl DownloadTask {
       let length = self.filename.metadata().when(("metadata", &self.filename))?.len();
       return Ok(DownloadState { current: length, max: length })
     }
-    let client = reqwest::Client::new();
+    let client = self.client.clone().unwrap_or_else(|| reqwest::Client::new());
     let resp = client.get(self.url.clone()).send().await.when_download(&self)?;
     let length = resp.content_length().unwrap_or(0);
     let mut partial_len = 0;

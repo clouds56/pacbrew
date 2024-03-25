@@ -2,7 +2,7 @@ use std::{path::{Path, PathBuf}, time::Duration};
 
 use indicatif::ProgressStyle;
 
-use crate::{error::Result, io::fetch::{self, DownloadState}, package::{mirror::MirrorServer, package::{ArchUrl, PackageUrl}}, ui::{bar::{FeedBar, FeedMulti}, EventListener}};
+use crate::{error::Result, io::fetch::{self, DownloadState}, package::{mirror::MirrorServer, package::{PkgBuild, PackageUrl}}, ui::{bar::{FeedBar, FeedMulti}, EventListener}};
 
 #[derive(Clone, Debug)]
 pub struct Event {
@@ -48,21 +48,22 @@ impl FeedMulti<String> for Event {
   }
 }
 
-pub async fn step<P: AsRef<Path>>(_mirror: &MirrorServer, pkg: &ArchUrl, cache_path: P, tracker: impl EventListener<DownloadState>) -> Result<PathBuf> {
+pub async fn step<P: AsRef<Path>>(client: reqwest::Client, pkg: &PkgBuild, cache_path: P, tracker: impl EventListener<DownloadState>) -> Result<PathBuf> {
   let target = cache_path.as_ref().join(&pkg.filename);
-  let task = fetch::DownloadTask::new(&pkg.url, &target, Some(pkg.sha256.clone()))?;
-  task.run(tracker).await?;
+  let mut task = fetch::DownloadTask::new(&pkg.url, &target, Some(pkg.sha256.clone()))?;
+  task.client(Some(client)).run(tracker).await?;
   tokio::time::sleep(Duration::from_millis(1000)).await;
   Ok(target)
 }
 
 #[tracing::instrument(level = "debug", skip_all, fields(cache_path = %cache_path.as_ref().display(), mirror = mirror.base_url))]
-pub async fn exec<'a, P: AsRef<Path>, I: IntoIterator<Item = (&'a ArchUrl, &'a PackageUrl)>>(mirror: &MirrorServer, pkgs: I, cache_path: P, tracker: impl EventListener<Event>) -> Result<Vec<PathBuf>> {
+pub async fn exec<'a, P: AsRef<Path>, I: IntoIterator<Item = (&'a PkgBuild, &'a PackageUrl)>>(mirror: &MirrorServer, pkgs: I, cache_path: P, tracker: impl EventListener<Event>) -> Result<Vec<PathBuf>> {
   let mut result = Vec::new();
+  let client = mirror.client();
   for (i, (pkg, url)) in pkgs.into_iter().enumerate() {
     tracker.on_event(Event::overall(&format!("now {}", url.name), i as _, None));
     tracker.on_event(Event::task(&pkg.filename, 0, Some(url.pkg_size)));
-    let value = step(mirror, pkg, &cache_path, |e: DownloadState| tracker.on_event(Event::task(&pkg.filename, e.current, Some(e.max)))).await?;
+    let value = step(client.clone(), pkg, &cache_path, |e: DownloadState| tracker.on_event(Event::task(&pkg.filename, e.current, Some(e.max)))).await?;
     tracker.on_event(Event::finish(Some(&pkg.filename)));
     result.push(value)
   }
@@ -71,19 +72,20 @@ pub async fn exec<'a, P: AsRef<Path>, I: IntoIterator<Item = (&'a ArchUrl, &'a P
 
 #[tokio::test]
 pub async fn test_download() {
-  let cache_dir = "cache";
-  std::fs::create_dir_all(cache_dir).ok();
+  use crate::tests::*;
+  let cache_path = CACHE_PATH;
+  let arch = ARCH;
+  std::fs::create_dir_all(cache_path).ok();
   let active_pb = crate::tests::init_logger(Some("warn"));
-  let mirror = MirrorServer::ghcr();
-  let arch = "arm64_sonoma".to_string();
+  let mirror = MirrorServer::new(MIRROR.0, MIRROR.1);
   let query = ["wget"];
   let formulas = crate::io::read::read_formulas(crate::tests::FORMULA_FILE).unwrap();
   let resolved = super::resolve::exec(&formulas, query, ()).await.unwrap().resolved;
-  let urls = super::probe::exec(&mirror, &resolved, arch, ()).await.unwrap();
+  let urls = super::probe::exec(cache_path, &mirror, arch, &resolved, ()).await.unwrap();
   warn!("start downloading");
   let result = crate::ui::with_progess_multibar(active_pb, Event::new(resolved.len()), |tracker| async {
     let tmp = urls.iter().map(|i| (&i.pkg, &i.url)).collect::<Vec<_>>();
-    exec(&mirror, tmp, cache_dir, tracker).await
+    exec(&mirror, tmp, cache_path, tracker).await
   }, ()).await.unwrap();
   info!(len=result.len());
   assert_eq!(result.len(), resolved.len());

@@ -1,4 +1,4 @@
-use std::{collections::HashMap, fmt::Debug, hash::Hash, pin::Pin, sync::{Arc, RwLock}, time::Duration};
+use std::{collections::HashMap, fmt::Debug, hash::Hash, pin::Pin, sync::{Arc, RwLock}};
 
 use futures::Future;
 use indicatif::{MultiProgress, ProgressBar, ProgressDrawTarget, ProgressStyle};
@@ -291,7 +291,7 @@ fn test_multibar() {
   ];
   for e in events {
     multi_bar.on_event(e);
-    std::thread::sleep(Duration::from_millis(200))
+    std::thread::sleep(std::time::Duration::from_millis(200))
   }
 
 }

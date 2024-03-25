@@ -1,5 +1,6 @@
-use super::package::{ArchUrl, PackageOffline};
+use super::package::{PkgBuild, PackageOffline};
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum MirrorType {
   Ghcr, Oci, Bottle,
 }
@@ -10,6 +11,12 @@ pub struct MirrorServer {
 }
 
 impl MirrorServer {
+  pub fn new(server_type: MirrorType, base_url: &str) -> Self {
+    if server_type == MirrorType::Ghcr {
+      warn!("should not use ghcr with custom base_url, please use MirrorServer::ghcr() instead");
+    }
+    Self { server_type, base_url: base_url.to_string() }
+  }
   pub fn ghcr() -> Self {
     Self {
       server_type: MirrorType::Ghcr,
@@ -25,7 +32,7 @@ impl MirrorServer {
     }
   }
 
-  pub fn package_url(&self, info: &PackageOffline, arch: &ArchUrl) -> String {
+  pub fn package_url(&self, info: &PackageOffline, arch: &PkgBuild) -> String {
     match self.server_type {
       MirrorType::Oci | MirrorType::Ghcr => format!("{}/{}/blobs/sha256:{}", self.base_url, info.name.replace("@", "/").replace("+", "x"), arch.sha256),
       MirrorType::Bottle => format!("{}/{}", self.base_url, arch.filename),

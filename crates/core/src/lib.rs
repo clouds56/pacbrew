@@ -14,9 +14,12 @@ pub mod io {
 #[cfg(test)]
 mod tests {
   use std::{str::FromStr, sync::{Arc, RwLock}};
-  use crate::ui::bar::{PbWriter, Suspendable};
+  use crate::{package::mirror::MirrorType, ui::bar::{PbWriter, Suspendable}};
 
   pub static FORMULA_FILE: &str = "formula.json";
+  pub static CACHE_PATH: &str = "cache";
+  pub static ARCH: &str = "arm64_sonoma";
+  pub static MIRROR: (MirrorType, &str) = (MirrorType::Ghcr, "https://ghcr.io/v2/homebrew/core");
 
   pub fn init_logger(env_filter: Option<&str>) -> Arc<RwLock<Option<Suspendable>>> {
     use tracing_subscriber::fmt::format::FmtSpan;
