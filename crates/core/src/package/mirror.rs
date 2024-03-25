@@ -10,6 +10,13 @@ pub struct MirrorServer {
 }
 
 impl MirrorServer {
+  pub fn ghcr() -> Self {
+    Self {
+      server_type: MirrorType::Ghcr,
+      base_url: "https://ghcr.io/v2/homebrew/core".to_string(),
+    }
+  }
+
   pub fn api_formula(&self) -> Option<String> {
     match self.server_type {
       MirrorType::Ghcr => Some("https://formulae.brew.sh/api/formula.json".to_string()),
@@ -23,6 +30,27 @@ impl MirrorServer {
       MirrorType::Oci | MirrorType::Ghcr => format!("{}/{}/blobs/sha256:{}", self.base_url, info.name.replace("@", "/").replace("+", "x"), arch.sha256),
       MirrorType::Bottle => format!("{}/{}", self.base_url, arch.filename),
     }
+  }
+
+  pub fn client(&self) -> reqwest::Client {
+    let builder = reqwest::Client::builder();
+    let builder = match self.server_type {
+      MirrorType::Ghcr => {
+        use reqwest::header;
+        let mut headers = header::HeaderMap::new();
+        let mut auth_value = header::HeaderValue::from_static("Bearer QQ==");
+        auth_value.set_sensitive(true);
+        headers.insert(header::AUTHORIZATION, auth_value);
+        builder
+          .user_agent("pacbrew/0.1")
+          .default_headers(headers)
+        },
+      MirrorType::Oci | MirrorType::Bottle => {
+        builder
+          .user_agent("Wget/1.21.3")
+      },
+    };
+    builder.build().expect("build client")
   }
 }
 

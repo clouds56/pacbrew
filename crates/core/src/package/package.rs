@@ -81,4 +81,9 @@ impl PackageOffline {
       format!("{}_{}", version, revision)
     }
   }
+
+  pub fn find_arch(&self, arch: &str) -> Option<&ArchUrl> {
+    // TODO: arch to enum, and fallback
+    self.tar.iter().find(|i| i.arch == arch)
+  }
 }

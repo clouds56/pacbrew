@@ -22,7 +22,7 @@ pub fn exec<'a, I: IntoIterator<Item = &'a str>>(formulas: &[Formula], query: I)
   formula_index.extend(formulas.iter().map(|f| (f.full_name.as_str(), f)));
   let mut collected = Vec::new();
   while let Some(item) = queue.pop_front() {
-    let formula = *formula_index.get(item).ok_or_else(|| crate::error::Error::PackageNotFound(item.to_string()))?;
+    let formula = *formula_index.get(item).ok_or_else(|| crate::error::Error::package_not_found(item))?;
     if direct_names.contains_key(item) {
       direct_names.insert(item, &formula.full_name);
     }

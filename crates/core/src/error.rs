@@ -1,10 +1,25 @@
-use crate::io::fetch::DownloadTask;
+use crate::{io::fetch::DownloadTask, package::package::PackageOffline};
 use std::{path::{Path, PathBuf}, result::Result as StdResult};
 
 pub type Result<T, E=Error> = StdResult<T, E>;
 
 #[derive(Debug, thiserror::Error)]
 pub enum Error {
+  #[error("request {} failed to {}", .action, .url)]
+  RequestFailed {
+    action: &'static str,
+    url: String,
+    #[source]
+    error: Option<reqwest::Error>,
+  },
+  #[error("parse response of {} {} failed when {} due to {inner}", .action, .url, .reason)]
+  ResponseMalformed {
+    action: &'static str,
+    url: String,
+    reason: String,
+    #[source]
+    inner: anyhow::Error,
+  },
   #[error("download from {} to {} failed, caused by: {error}", .task.url, .task.filename.to_string_lossy())]
   DownloadFailed {
     task: DownloadTask,
@@ -40,8 +55,27 @@ pub enum Error {
   },
   #[error("malformed url {}", .0)]
   MalformedUrl(String),
-  #[error("package not found: {}", .0)]
-  PackageNotFound(String),
+  #[error("package not found: {} with {:?} in [{}]", .name, .arch, .avaliable.join(","))]
+  PackageNotFound {
+    name: String,
+    arch: Option<String>,
+    avaliable: Vec<String>,
+  },
+}
+
+impl Error {
+  pub fn package_not_found(package: &str) -> Self {
+    Self::PackageNotFound { name: package.to_string(), arch: None, avaliable: vec![] }
+  }
+  pub fn package_arch_not_found(package: &PackageOffline, arch: &str) -> Self {
+    Self::PackageNotFound { name: package.name.clone(), arch: Some(arch.to_string()), avaliable: package.tar.iter().map(|i| i.arch.clone()).collect() }
+  }
+  pub fn parse_response<'a, E: Into<anyhow::Error>>(action: &'static str, url: &'a str, reason: &'a str) -> impl FnOnce(E) -> Self + 'a {
+    move |e: E| Self::ResponseMalformed { action, url: url.to_string(), reason: reason.to_string(), inner: e.into() }
+  }
+  pub fn parse_response_error<'a>(action: &'static str, url: &'a str, reason: &'a str) -> Self {
+    Self::ResponseMalformed { action, url: url.to_string(), reason: reason.to_string(), inner: anyhow::Error::msg("option") }
+  }
 }
 
 pub trait ErrorExt<'a, T, E> {
@@ -50,9 +84,9 @@ pub trait ErrorExt<'a, T, E> {
 }
 
 impl<'a, T> ErrorExt<'a, T, reqwest::Error> for StdResult<T, reqwest::Error> {
-  type Ctx = &'a DownloadTask;
-  fn when(self, ctx: Self::Ctx) -> Result<T> {
-    self.map_err(|error| Error::DownloadFailed { task: ctx.clone(), error })
+  type Ctx = (&'static str, &'a str);
+  fn when(self, (action, url): Self::Ctx) -> Result<T> {
+    self.map_err(|error| Error::RequestFailed { action, url: url.to_string(), error: Some(error) })
   }
 }
 

@@ -15,6 +15,16 @@ pub struct DownloadState {
   pub max: u64,
 }
 
+pub trait ErrorDownloadExt<T> {
+  fn when_download(self, task: &DownloadTask) -> Result<T>;
+}
+
+impl<T> ErrorDownloadExt<T> for Result<T, reqwest::Error> {
+  fn when_download(self, ctx: &DownloadTask) -> Result<T> {
+    self.map_err(|error| Error::DownloadFailed { task: ctx.clone(), error })
+  }
+}
+
 /// The download task would download url to filename, and verify sha256.
 /// it would first download to filename.tmp, then rename to filename.
 #[derive(Debug)]
@@ -57,7 +67,7 @@ impl DownloadTask {
       return Ok(DownloadState { current: length, max: length })
     }
     let client = reqwest::Client::new();
-    let resp = client.get(self.url.clone()).send().await.when(&self)?;
+    let resp = client.get(self.url.clone()).send().await.when_download(&self)?;
     let length = resp.content_length().unwrap_or(0);
     let mut partial_len = 0;
     let tmp_filename = tmp_path(&self.filename, ".part");
@@ -65,7 +75,7 @@ impl DownloadTask {
     let mut file = tokio::fs::File::create(&tmp_filename).await.when(("create", &tmp_filename))?;
     let mut stream = resp.bytes_stream();
     while let Some(bytes) = stream.next().await {
-      let bytes = bytes.when(&self)?;
+      let bytes = bytes.when_download(&self)?;
       partial_len += bytes.len() as u64;
       file.write_all(&bytes).await.when(("write", &tmp_filename))?;
       // debug!(tracker=self.tracker.is_some(), partial_len);
