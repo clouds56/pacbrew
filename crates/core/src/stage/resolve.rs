@@ -60,9 +60,9 @@ async fn test_resolve() {
   let formulas = crate::io::read::read_formulas("formula.json").unwrap();
 
   let init = Event { name: String::new(), current: 0, max: Some(query.len()) };
-  let result = crate::ui::bar::with_progess_bar(active_pb.clone(), init, |tracker| async move {
+  let result = crate::ui::with_progess_bar(active_pb.clone(), init, |tracker| async move {
     exec(&formulas, query, tracker).await
-  }).await.unwrap();
+  }, ()).await.unwrap();
 
   info!(names=result.names.join(","));
   info!(resolved=result.resolved.iter().map(|f| f.name.as_str()).collect::<Vec<_>>().join(","));

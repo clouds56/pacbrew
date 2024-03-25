@@ -87,7 +87,7 @@ impl<T: FeedBar> EventListener<T> for ProgressBar {
   }
 }
 
-pub async fn with_progess_bar<'a, T, R, F, Fut>(active: ActiveSuspendable, init: T, f: F) -> R
+pub async fn with_progess_bar<'a, T, R, F, Fut>(active: ActiveSuspendable, init: T, f: F, tracker: impl EventListener<T>) -> R
 where
   T: Clone + 'static + FeedBar,
   F: FnOnce(Tracker<T>) -> Fut + 'a,
@@ -106,12 +106,13 @@ where
   }
   let old = active.write().unwrap().replace(Suspendable::ProgressBar(pb.clone()));
   pb.on_event(init.clone());
-  let tracker = Tracker::new(init);
-  let mut events = tracker.progress();
-  let fut = unsafe { make_static(f(tracker)) };
+  let pb_tracker = Tracker::new(init);
+  let mut events = pb_tracker.progress();
+  let fut = unsafe { make_static(f(pb_tracker)) };
   let handle = tokio::spawn(fut);
   while let Some(event) = events.recv().await {
-    pb.on_event(event);
+    pb.on_event(event.clone());
+    tracker.on_event(event);
   }
   pb.finish();
   drop(pb);

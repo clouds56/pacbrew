@@ -1,11 +1,10 @@
 
 use std::path::{Path, PathBuf};
-use crate::{error::{Error, ErrorExt, Result}, ui::tracker::{Events, Tracker}};
+use crate::{error::{Error, ErrorExt, Result}, ui::{bar::FeedBar, EventListener}};
 
 use futures::StreamExt as _;
 use reqwest::{IntoUrl, Url};
-use tokio::{io::AsyncWriteExt as _, task::JoinHandle};
-use tracing::Instrument;
+use tokio::io::AsyncWriteExt as _;
 
 use super::read::tmp_path;
 
@@ -13,6 +12,12 @@ use super::read::tmp_path;
 pub struct DownloadState {
   pub current: u64,
   pub max: u64,
+}
+
+impl FeedBar for DownloadState {
+  fn message(&self) -> Option<String> { None }
+  fn position(&self) -> Option<u64> { Some(self.current as _) }
+  fn length(&self) -> Option<u64> { Some(self.max as _) }
 }
 
 pub trait ErrorDownloadExt<T> {
@@ -33,7 +38,6 @@ pub struct DownloadTask {
   pub filename: PathBuf,
   pub sha256: Option<String>,
   pub force: bool,
-  pub tracker: Option<Tracker<DownloadState>>,
 }
 
 impl Clone for DownloadTask {
@@ -43,7 +47,6 @@ impl Clone for DownloadTask {
       filename: self.filename.clone(),
       sha256: self.sha256.clone(),
       force: self.force.clone(),
-      tracker: Some(Tracker::new(Default::default())),
     }
   }
 }
@@ -52,7 +55,7 @@ impl DownloadTask {
   pub fn new<U: IntoUrl, P: Into<PathBuf>>(url: U, filename: P, sha256: Option<String>) -> Result<Self> {
     let url = into_url(url)?;
     let filename = filename.into();
-    Ok(Self { url, filename, sha256, force: false, tracker: Some(Tracker::new(Default::default())) })
+    Ok(Self { url, filename, sha256, force: false })
   }
 
   pub fn force(&mut self, force: bool) -> &mut Self {
@@ -61,7 +64,7 @@ impl DownloadTask {
   }
 
   #[tracing::instrument(level = "trace", skip_all, fields(url = %self.url.as_str(), path = %self.filename.to_string_lossy()))]
-  pub async fn run(&self) -> Result<DownloadState> {
+  pub async fn run(&self, tracker: impl EventListener<DownloadState>) -> Result<DownloadState> {
     if !self.force && self.filename.exists() {
       let length = self.filename.metadata().when(("metadata", &self.filename))?.len();
       return Ok(DownloadState { current: length, max: length })
@@ -79,9 +82,7 @@ impl DownloadTask {
       partial_len += bytes.len() as u64;
       file.write_all(&bytes).await.when(("write", &tmp_filename))?;
       // debug!(tracker=self.tracker.is_some(), partial_len);
-      if let Some(tracker) = &self.tracker {
-        tracker.send(DownloadState { current: partial_len as u64, max: length });
-      }
+      tracker.on_event(DownloadState { current: partial_len as u64, max: length });
     }
     file.sync_all().await.when(("sync", &tmp_filename))?;
     debug!(message="rename", from=%tmp_filename.display(), to=%self.filename.display());
@@ -96,16 +97,12 @@ fn into_url(url: impl IntoUrl) -> Result<Url> {
 }
 
 /// download json api from https://formulae.brew.sh/api/formula.json
-#[tracing::instrument(level = "debug", skip(url, path), fields(url = %url.as_str(), path = %path.as_ref().to_string_lossy()))]
-pub async fn download_db<U: IntoUrl, P: AsRef<Path>>(url: U, path: P) -> Result<(JoinHandle<()>, Events<DownloadState>)> {
+#[tracing::instrument(level = "debug", skip_all, fields(url = %url.as_str(), path = %path.as_ref().to_string_lossy()))]
+pub async fn download_db<U: IntoUrl, P: AsRef<Path>>(url: U, path: P, tracker: impl EventListener<DownloadState>) -> Result<DownloadState> {
   let url = url.as_str();
   let filename = path.as_ref();
   let mut task = DownloadTask::new(url, filename, None)?;
-  let events = task.tracker.as_ref().unwrap().progress();
-  let handle = tokio::spawn(async move {
-    let _ = task.force(true).run().await;
-  }.in_current_span());
-  Ok((handle, events))
+  task.force(true).run(tracker).await
 }
 
 #[tokio::test]
@@ -116,15 +113,9 @@ async fn test_download_db() {
   // let url = "https://formulae.brew.sh/api/formula.json".to_string();
   let target = url.rsplit('/').next().unwrap();
 
-  let (handle, mut events) = download_db(&url, target).await.unwrap();
-  let pb = indicatif::ProgressBar::new(100);
-  active_pb.write().unwrap().replace(crate::ui::bar::Suspendable::ProgressBar(pb.clone()));
-  while let Some(event) = events.recv().await {
-    pb.set_length(event.max);
-    pb.set_position(event.current);
-    info!(message="recv", event.current, event.max);
-  }
-  handle.await.unwrap();
+  crate::ui::with_progess_bar(active_pb, DownloadState::default(), |tracker| async {
+    download_db(&url, target, tracker).await
+  }, ()).await.unwrap();
   assert!(Path::new(target).exists());
   info!(len=%std::fs::metadata(target).unwrap().len());
   std::fs::remove_file(target).unwrap();

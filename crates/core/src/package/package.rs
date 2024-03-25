@@ -8,7 +8,7 @@ pub struct Package {
   pub url: PackageUrl,
 }
 
-#[derive(serde::Serialize, serde::Deserialize)]
+#[derive(Clone, serde::Serialize, serde::Deserialize)]
 pub struct ArchUrl {
   pub arch: String,
   pub rebuild: u32,

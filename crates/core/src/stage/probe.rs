@@ -20,15 +20,23 @@ pub async fn step(mirror: &MirrorServer, info: &PackageOffline, pkg: &ArchUrl) -
   })
 }
 
-pub async fn exec<'a, I: IntoIterator<Item = &'a PackageOffline> + Clone>(mirror: &MirrorServer, packages: I, arch: String, tracker: impl EventListener<Event>) -> Result<Vec<PackageUrl>> {
+pub struct Value {
+  pub pkg: ArchUrl,
+  pub url: PackageUrl,
+}
+
+pub async fn exec<'a, I: IntoIterator<Item = &'a PackageOffline> + Clone>(mirror: &MirrorServer, packages: I, arch: String, tracker: impl EventListener<Event>) -> Result<Vec<Value>> {
   let mut result = Vec::new();
   let urls = packages.clone().into_iter().map(|package| {
     package.find_arch(&arch).ok_or_else(|| Error::package_arch_not_found(package, &arch))
   }).collect::<Result<Vec<_>, _>>()?;
   for (i, (info, pkg)) in packages.into_iter().zip(urls).enumerate() {
     tracker.on_event(Event { name: info.name.clone(), current: i, max: None });
-    let value = step(mirror, info, pkg).await?;
-    result.push(value)
+    let url = step(mirror, info, pkg).await?;
+    result.push(Value {
+      pkg: pkg.clone(),
+      url,
+    })
   }
   Ok(result)
 }
@@ -41,10 +49,10 @@ async fn test_probe() {
   let query = ["llvm"];
   let formulas = crate::io::read::read_formulas(crate::tests::FORMULA_FILE).unwrap();
   let resolved = super::resolve::exec(&formulas, query, ()).await.unwrap().resolved;
-  let result = crate::ui::bar::with_progess_bar(active_pb, Event::new(resolved.len()), |tracker| async {
+  let result = crate::ui::with_progess_bar(active_pb, Event::new(resolved.len()), |tracker| async {
     exec(&mirror, &resolved, arch, tracker).await
-  }).await.unwrap();
-  info!(len=result.len(), sum=result.iter().map(|i| i.pkg_size).sum::<u64>());
+  }, ()).await.unwrap();
+  info!(len=result.len(), sum=result.iter().map(|i| i.url.pkg_size).sum::<u64>());
   assert_eq!(result.len(), resolved.len());
-  assert_eq!(result.iter().map(|i| &i.name).collect::<Vec<_>>(), resolved.iter().map(|i| &i.name).collect::<Vec<_>>());
+  assert_eq!(result.iter().map(|i| &i.url.name).collect::<Vec<_>>(), resolved.iter().map(|i| &i.name).collect::<Vec<_>>());
 }
