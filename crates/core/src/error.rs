@@ -26,6 +26,8 @@ pub enum Error {
   },
   #[error("malformed url {}", .0)]
   MalformedUrl(String),
+  #[error("package not found: {}", .0)]
+  PackageNotFound(String),
 }
 
 pub trait ErrorExt<'a, T, E> {
