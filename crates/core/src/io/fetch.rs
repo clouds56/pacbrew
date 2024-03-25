@@ -5,6 +5,7 @@ use crate::{error::{Error, ErrorExt, Result}, progress::{Events, Progress, Progr
 use futures::StreamExt as _;
 use reqwest::{IntoUrl, Url};
 use tokio::{io::AsyncWriteExt as _, task::JoinHandle};
+use tracing::Instrument;
 
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct DownloadState {
@@ -98,7 +99,7 @@ pub async fn download_db<U: IntoUrl, P: AsRef<Path>>(url: U, path: P) -> Result<
   let events = task.tracker.as_ref().unwrap().progress();
   let handle = tokio::spawn(async move {
     let _ = task.force(true).run().await;
-  });
+  }.in_current_span());
   Ok((handle, events))
 }
 

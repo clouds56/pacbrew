@@ -295,9 +295,10 @@ pub struct Formula {
 
 #[test]
 fn test_formula() {
+  crate::tests::init_logger();
   // TODO: enable brotli?
   let filename = "formula.json";
-  let formula_str = std::fs::read_to_string(filename).expect("read");
-  let formula = serde_json::from_str::<Vec<Formula>>(&formula_str).expect("parse");
-  assert_ne!(formula.len(), 0);
+  let formulas = crate::io::read::read_formulas(filename).unwrap();
+  info!(message="parsed", formula.len=formulas.len());
+  assert_ne!(formulas.len(), 0);
 }
