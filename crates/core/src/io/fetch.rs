@@ -96,7 +96,7 @@ async fn test_download_db() {
   info!(%req, target=%target.display());
   let mirrors = get_mirrors();
 
-  crate::ui::with_progess_bar(active_pb, None, FetchState::default(), |tracker| async {
+  crate::ui::with_progess_bar(active_pb, None, None, |tracker| async {
     fetch_remote(&mirrors, FetchReq::Api("formula.json".to_string()), &target, tracker).await
   }, ()).await.unwrap();
   assert!(target.exists());

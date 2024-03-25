@@ -30,7 +30,7 @@ async fn test_update_formula() {
   crate::ui::with_progess_bar(
     active_pb,
     None,
-    FetchState::default(),
+    None,
     |tracker| exec(&mirrors, CACHE_PATH, tracker),
     (),
   ).await.unwrap();

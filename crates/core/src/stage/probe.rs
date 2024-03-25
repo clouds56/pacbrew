@@ -85,7 +85,7 @@ async fn test_probe() {
   let query = ["llvm"];
   let formulas = crate::io::read::read_formulas(crate::tests::FORMULA_FILE).unwrap();
   let resolved = super::resolve::exec(&formulas, query, ()).await.unwrap().packages;
-  let result = crate::ui::with_progess_bar(active_pb, None, Event::new(resolved.len()), |tracker| async {
+  let result = crate::ui::with_progess_bar(active_pb, None, Some(Event::new(resolved.len())), |tracker| async {
     exec(cache_path, &mirrors, arch, &resolved, tracker).await
   }, ()).await.unwrap();
   info!(len=result.len(), sum=result.iter().map(|i| i.url.pkg_size).sum::<u64>());

@@ -13,7 +13,7 @@ pub async fn run(config: &Config, mirrors: &MirrorLists, query: QueryArgs) -> Re
   let resolved = with_progess_bar(
     ACTIVE_PB.clone(),
     Some(PbStyle::Items.style()),
-    stage::Event::new(query.names.len()),
+    Some(stage::Event::new(query.names.len())),
     |tracker| resolve::exec(&formulas, query.names.iter(), tracker),
     ()
   ).await.unwrap();
@@ -22,7 +22,7 @@ pub async fn run(config: &Config, mirrors: &MirrorLists, query: QueryArgs) -> Re
   let urls = with_progess_bar(
     ACTIVE_PB.clone(),
     Some(PbStyle::Items.style()),
-    stage::Event::new(resolved.packages.len()),
+    Some(stage::Event::new(resolved.packages.len())),
     |tracker| probe::exec(&config.base.cache, mirrors, &config.base.arch, &resolved.packages, tracker),
     (),
   ).await.unwrap();
@@ -31,7 +31,6 @@ pub async fn run(config: &Config, mirrors: &MirrorLists, query: QueryArgs) -> Re
   with_progess_multibar(
     ACTIVE_PB.clone(),
     Some(PbStyle::Bytes.style()),
-    download::Event::overall("download", 0, Some(urls.len())),
     |tracker| download::exec(mirrors, urls.iter().map(|i| (&i.pkg, &i.url)), &config.base.cache, tracker),
     (),
   ).await.unwrap();

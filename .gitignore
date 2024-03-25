@@ -3,10 +3,11 @@
 /Cargo.lock
 /formula.json
 
-crates/**/*.tmp
-crates/**/formula.json
 crates/**/cache
-crates/**/pacbrew.toml
+*.tmp
+formula.json
+pacbrew.toml
+.env
 
 /cache/*
 !/cache/pactree.conf

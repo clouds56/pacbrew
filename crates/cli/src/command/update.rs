@@ -1,5 +1,5 @@
 use anyhow::Result;
-use core_lib::{io::{fetch::MirrorLists, FetchState}, stage::update_db, ui::with_progess_bar};
+use core_lib::{io::fetch::MirrorLists, stage::update_db, ui::with_progess_bar};
 
 use crate::{command::PbStyle, config::Config, ACTIVE_PB};
 
@@ -9,7 +9,7 @@ pub async fn run(config: &Config, mirrors: &MirrorLists) -> Result<()> {
   with_progess_bar(
     ACTIVE_PB.clone(),
     Some(PbStyle::Bytes.style()),
-    FetchState::default(),
+    None,
     |tracker| update_db::exec(mirrors, &config.base.cache, tracker),
     (),
   ).await.unwrap();

@@ -90,7 +90,7 @@ impl<T: FeedBar> EventListener<T> for ProgressBar {
 pub async fn with_progess_bar<'a, T, R, F, Fut>(
   active: ActiveSuspendable,
   style: Option<ProgressStyle>,
-  init: T,
+  init: Option<T>,
   f: F,
   tracker: impl EventListener<T>,
 ) -> R
@@ -111,7 +111,9 @@ where
     pb.set_style(style);
   }
   let old = active.write().unwrap().replace(Suspendable::ProgressBar(pb.clone()));
-  pb.on_event(init.clone());
+  if let Some(init) = &init {
+    pb.on_event(init.clone());
+  }
   let pb_tracker = Tracker::new(init);
   let mut events = pb_tracker.progress();
   let fut = unsafe { make_static(f(pb_tracker)) };
@@ -220,7 +222,6 @@ impl<S: Hash + Eq + Clone + Debug, T: FeedMulti<S> + Clone> EventListener<T> for
 pub async fn with_progess_multibar<'a, S, T, R, F, Fut>(
   active: ActiveSuspendable,
   style: Option<ProgressStyle>,
-  init: T,
   f: F,
   tracker: impl EventListener<T>
 ) -> R
@@ -241,8 +242,7 @@ where
   let pb_multi = MultiProgress::new();
   let pb_multi_bar = MultiBar::new(pb_multi.clone(), style);
   let old = active.write().unwrap().replace(Suspendable::MultiProgress(pb_multi));
-  pb_multi_bar.on_event(init.clone());
-  let pb_tracker = Tracker::new(init);
+  let pb_tracker = Tracker::new(None);
   let mut events = pb_tracker.progress();
   let fut = unsafe { make_static(f(pb_tracker)) };
   let handle = tokio::spawn(fut);

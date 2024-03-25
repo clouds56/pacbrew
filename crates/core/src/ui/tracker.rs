@@ -6,7 +6,7 @@ use tokio::sync::broadcast::{error::RecvError, Receiver, Sender};
 use super::EventListener;
 
 pub struct Tracker<T> {
-  init: Arc<Mutex<T>>,
+  init: Arc<Mutex<Option<T>>>,
   tx: Sender<T>,
 }
 
@@ -17,7 +17,7 @@ impl<T: std::fmt::Debug> std::fmt::Debug for Tracker<T> {
 }
 
 impl<T: Clone> Tracker<T> {
-  pub fn new(init: T) -> Self {
+  pub fn new(init: Option<T>) -> Self {
     let (tx, _) = tokio::sync::broadcast::channel(1024);
     Self { init: Arc::new(Mutex::new(init)), tx }
   }
@@ -31,7 +31,7 @@ impl<T: Clone + 'static> EventListener<T> for Tracker<T> {
 
 impl<T: Clone + 'static> Tracker<T> {
   pub fn send(&self, event: T) -> bool {
-    *self.init.lock().unwrap() = event.clone();
+    *self.init.lock().unwrap() = Some(event.clone());
     self.tx.send(event).is_ok()
   }
 
@@ -42,7 +42,7 @@ impl<T: Clone + 'static> Tracker<T> {
 }
 
 pub struct Events<T> {
-  pub init: Arc<Mutex<T>>,
+  pub init: Arc<Mutex<Option<T>>>,
   stream: Receiver<T>,
   lagged: bool,
 }
