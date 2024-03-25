@@ -69,7 +69,7 @@ fn test_mirror() {
 
   let mirror = MirrorServer::ghcr();
   let packages = crate::io::read::read_formulas(crate::tests::FORMULA_FILE).unwrap()
-    .into_iter().map(crate::package::package::PackageOffline::from).collect::<Vec<_>>();
+    .into_iter().map(crate::package::package::PackageVersion::from).collect::<Vec<_>>();
   for package in &packages {
     for arch in &package.prebuilds {
       let url = mirror.package_url(&arch);

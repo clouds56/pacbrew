@@ -2,7 +2,7 @@ use std::path::Path;
 
 use reqwest::header;
 
-use crate::{error::{Error, ErrorExt, Result}, io::fetch::{FetchReq, MirrorLists}, package::package::{PackageOffline, PackageUrl, PkgBuild}, ui::EventListener};
+use crate::{error::{Error, ErrorExt, Result}, io::fetch::{FetchReq, MirrorLists}, package::package::{PackageVersion, PackageUrl, PkgBuild}, ui::EventListener};
 
 use super::Event;
 
@@ -48,7 +48,7 @@ pub async fn exec<'a, P, I>(
 ) -> Result<Vec<Value>>
 where
   P: AsRef<Path>,
-  I: IntoIterator<Item = &'a PackageOffline> + Clone,
+  I: IntoIterator<Item = &'a PackageVersion> + Clone,
 {
   let mut result = Vec::new();
   let urls = packages.clone().into_iter().map(|package| {

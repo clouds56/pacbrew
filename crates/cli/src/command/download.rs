@@ -28,12 +28,14 @@ pub async fn run(config: &Config, mirrors: &MirrorLists, query: QueryArgs) -> Re
   ).await.unwrap();
 
   info!(message="probe", urls.len=urls.len(), pkgs=urls.iter().map(|i| i.pkg.filename.as_str()).collect::<Vec<_>>().join(","));
-  with_progess_multibar(
+  let cached = with_progess_multibar(
     ACTIVE_PB.clone(),
     Some(PbStyle::Bytes.style()),
     |tracker| download::exec(mirrors, urls.iter().map(|i| (&i.pkg, &i.url)), &config.base.cache, tracker),
     (),
   ).await.unwrap();
+
+  cached.iter().for_each(|i| info!(message="download", name=%i.name, size=%i.cache_size, path=%i.cache_pkg.display()));
   // TODO: verify
   Ok(())
 }

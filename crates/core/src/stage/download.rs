@@ -2,7 +2,7 @@ use std::path::{Path, PathBuf};
 
 use indicatif::ProgressStyle;
 
-use crate::{error::Result, io::{fetch::{fetch_remote, FetchReq, MirrorLists}, FetchState}, package::package::{PackageUrl, PkgBuild}, ui::{bar::{FeedBar, FeedMulti}, EventListener}};
+use crate::{error::{ErrorExt as _, Result}, io::{fetch::{fetch_remote, FetchReq, MirrorLists}, FetchState}, package::package::{PackageCache, PackageUrl, PkgBuild}, ui::{bar::{FeedBar, FeedMulti}, EventListener}};
 
 #[derive(Clone, Debug)]
 pub struct Event {
@@ -59,7 +59,7 @@ pub async fn step<P: AsRef<Path>>(mirrors: &MirrorLists, pkg: &PkgBuild, cache_p
 }
 
 #[tracing::instrument(level = "debug", skip_all, fields(cache_path = %cache_path.as_ref().display(), mirrors.len = mirrors.lists.len()))]
-pub async fn exec<'a, P: AsRef<Path>, I: IntoIterator<Item = (&'a PkgBuild, &'a PackageUrl)>>(mirrors: &MirrorLists, pkgs: I, cache_path: P, tracker: impl EventListener<Event>) -> Result<Vec<PathBuf>> {
+pub async fn exec<'a, P: AsRef<Path>, I: IntoIterator<Item = (&'a PkgBuild, &'a PackageUrl)>>(mirrors: &MirrorLists, pkgs: I, cache_path: P, tracker: impl EventListener<Event>) -> Result<Vec<PackageCache>> {
   let mut result = Vec::new();
   let pkgs = pkgs.into_iter().collect::<Vec<_>>();
   let mut total_size = 0;
@@ -77,7 +77,15 @@ pub async fn exec<'a, P: AsRef<Path>, I: IntoIterator<Item = (&'a PkgBuild, &'a 
     }).await?;
     downloaded_size += url.pkg_size;
     tracker.on_event(Event::finish(Some(&pkg.filename)));
-    result.push(value)
+    let cache_size = std::fs::metadata(&value).when(("metadata", &value))?.len();
+    if cache_size != url.pkg_size {
+      warn!(cache_size, url.pkg_size, "size not match");
+    }
+    result.push(PackageCache {
+      name: pkg.name.clone(),
+      cache_pkg: value,
+      cache_size,
+    })
   }
   tracker.on_event(Event::finish(None));
   Ok(result)

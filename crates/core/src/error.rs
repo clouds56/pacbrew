@@ -1,4 +1,4 @@
-use crate::{io::{fetch::FetchReq, http::DownloadTask}, package::package::PackageOffline};
+use crate::{io::{fetch::FetchReq, http::DownloadTask}, package::package::PackageVersion};
 use std::{path::{Path, PathBuf}, result::Result as StdResult};
 
 pub type Result<T, E=Error> = StdResult<T, E>;
@@ -69,7 +69,7 @@ impl Error {
   pub fn package_not_found(package: &str) -> Self {
     Self::PackageNotFound { name: package.to_string(), arch: None, avaliable: vec![] }
   }
-  pub fn package_arch_not_found(package: &PackageOffline, arch: &str) -> Self {
+  pub fn package_arch_not_found(package: &PackageVersion, arch: &str) -> Self {
     Self::PackageNotFound { name: package.name.clone(), arch: Some(arch.to_string()), avaliable: package.prebuilds.iter().map(|i| i.arch.clone()).collect() }
   }
   pub fn parse_response<'a, E: Into<anyhow::Error>>(action: &'static str, url: &'a str, reason: &'a str) -> impl FnOnce(E) -> Self + 'a {

@@ -3,11 +3,11 @@ use std::{borrow::Borrow, collections::{HashMap, HashSet, VecDeque}, time::Durat
 ///! query would find in Vec<Formula> to get correspond Package
 ///! with there dependences.
 
-use crate::{error::Result, package::{formula::Formula, package::PackageOffline}, stage::Event, ui::EventListener};
+use crate::{error::Result, package::{formula::Formula, package::PackageVersion}, stage::Event, ui::EventListener};
 
 pub struct Value {
   pub names: Vec<String>,
-  pub packages: Vec<PackageOffline>,
+  pub packages: Vec<PackageVersion>,
 }
 
 #[tracing::instrument(level = "debug", skip_all, fields(formulas.len=formulas.len()))]

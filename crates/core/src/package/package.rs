@@ -1,11 +1,16 @@
+use std::path::PathBuf;
+
 use super::formula::Formula;
 
 #[derive(Debug, serde::Serialize, serde::Deserialize)]
 pub struct Package {
-  #[serde(flatten)]
-  pub offline: PackageOffline,
-  #[serde(flatten)]
-  pub url: PackageUrl,
+  pub base: PackageVersion,
+  #[serde(default, skip_serializing_if = "Option::is_none")]
+  pub prebuild: Option<PkgBuild>,
+  #[serde(default, skip_serializing_if = "Option::is_none")]
+  pub url: Option<PackageUrl>,
+  #[serde(default, skip_serializing_if = "Option::is_none")]
+  pub cache: Option<PackageCache>,
 }
 
 #[derive(Clone, serde::Serialize, serde::Deserialize)]
@@ -32,7 +37,7 @@ impl std::fmt::Debug for PkgBuild {
 }
 
 #[derive(Debug, serde::Serialize, serde::Deserialize)]
-pub struct PackageOffline {
+pub struct PackageVersion {
   pub name: String,
   pub version: String,
   pub revision: u32,
@@ -43,7 +48,7 @@ pub struct PackageOffline {
   pub link_overwrite: Vec<String>,
 }
 
-impl From<Formula> for PackageOffline {
+impl From<Formula> for PackageVersion {
   fn from(f: Formula) -> Self {
     let version_full = Self::version_full_(&f.versions.stable, f.revision);
     let tar = f.bottle.get("stable").iter().flat_map(|i| i.files.iter().map(|(s, t)| (s, *i, t)))
@@ -74,7 +79,7 @@ impl From<Formula> for PackageOffline {
   }
 }
 
-impl PackageOffline {
+impl PackageVersion {
   pub fn version_full(&self) -> String {
     Self::version_full_(&self.version, self.revision)
   }
@@ -99,4 +104,11 @@ pub struct PackageUrl {
   pub name: String,
   pub pkg_url: String,
   pub pkg_size: u64,
+}
+
+#[derive(Debug, serde::Serialize, serde::Deserialize)]
+pub struct PackageCache {
+  pub name: String,
+  pub cache_pkg: PathBuf,
+  pub cache_size: u64,
 }
