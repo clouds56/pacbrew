@@ -5,6 +5,7 @@ pub mod error;
 pub mod progress;
 pub mod pb;
 
+pub mod package;
 pub mod io {
   pub mod fetch;
 }
