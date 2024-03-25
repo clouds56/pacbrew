@@ -9,17 +9,20 @@ pub struct MirrorLists {
 }
 
 impl MirrorLists {
-  pub fn url_iter<'a>(&'a self, req: FetchReq) -> Box<dyn Iterator<Item = String> + Send + 'a> {
+  pub fn url_iter<'a>(&'a self, req: FetchReq) -> Box<dyn Iterator<Item = (reqwest::Client, String)> + Send + 'a> {
     match req {
       FetchReq::Api(api) => {
-        let iter = self.lists.iter().filter_map(move |i| i.api_url(&api));
+        let iter = self.lists.iter().filter_map(move |i| i.api_url(&api).map(|u| (i.client(), u)));
         return Box::new(iter)
       },
       FetchReq::Package(pkg) => {
-        let iter = self.lists.iter().map(move |i| i.package_url(&pkg));
+        let iter = self.lists.iter().map(move |i| (i.client(), i.package_url(&pkg)));
         return Box::new(iter)
       },
     }
+  }
+  pub fn len(&self) -> usize {
+    self.lists.len()
   }
 }
 
@@ -62,17 +65,20 @@ impl FeedBar for FetchState {
 
 /// download json api from https://formulae.brew.sh/api/formula.json
 #[tracing::instrument(level = "debug", skip_all, fields(mirrors.len=mirrors.lists.len(), req = %req, path = %path.as_ref().to_string_lossy()))]
-pub async fn download_db<P: AsRef<Path>>(mirrors: &MirrorLists, req: FetchReq, path: P, tracker: impl EventListener<FetchState>) -> Result<FetchState> {
+pub async fn fetch_remote<P: AsRef<Path>>(mirrors: &MirrorLists, req: FetchReq, path: P, tracker: impl EventListener<FetchState>) -> Result<()> {
   let filename = path.as_ref();
   if let Some(i) = path.as_ref().parent() {
     std::fs::create_dir_all(i).when(("create_dir_all", i))?;
   }
-  for url in mirrors.url_iter(req.clone()) {
+  for (client, url) in mirrors.url_iter(req.clone()) {
     debug!(message="try mirror", url);
     let mut task = DownloadTask::new(url, filename, None)?;
     // TODO: keep partial download
-    match task.force(true).run(|e| tracker.on_event(e)).await {
-      Ok(state) => return Ok(state),
+    match task.client(Some(client)).force(true).run(|e| tracker.on_event(e)).await {
+      Ok(state) => {
+        tracker.on_event(state.clone());
+        return Ok(())
+      },
       Err(e) => warn!(%e, message="download failed"),
     }
   }
@@ -86,16 +92,16 @@ async fn test_download_db() {
 
   // let url = "https://formulae.brew.sh/api/formula.json".to_string();
   let req = FetchReq::Api("formula.json".to_string());
-  let target = req.target(".");
+  let target = req.target(CACHE_PATH);
   info!(%req, target=%target.display());
   let mirrors = MirrorLists {
     lists: vec![MirrorServer::new(MIRROR.0, MIRROR.1)]
   };
 
   crate::ui::with_progess_bar(active_pb, FetchState::default(), |tracker| async {
-    download_db(&mirrors, FetchReq::Api("formula.json".to_string()), &target, tracker).await
+    fetch_remote(&mirrors, FetchReq::Api("formula.json".to_string()), &target, tracker).await
   }, ()).await.unwrap();
   assert!(target.exists());
   info!(len=%std::fs::metadata(&target).unwrap().len());
-  std::fs::remove_file(target).unwrap();
+  // std::fs::remove_file(target).unwrap();
 }

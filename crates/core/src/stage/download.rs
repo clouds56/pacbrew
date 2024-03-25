@@ -1,8 +1,8 @@
-use std::{path::{Path, PathBuf}, time::Duration};
+use std::path::{Path, PathBuf};
 
 use indicatif::ProgressStyle;
 
-use crate::{error::Result, io::{http, FetchState}, package::{mirror::MirrorServer, package::{PackageUrl, PkgBuild}}, ui::{bar::{FeedBar, FeedMulti}, EventListener}};
+use crate::{error::Result, io::{fetch::{fetch_remote, FetchReq, MirrorLists}, FetchState}, package::package::{PackageUrl, PkgBuild}, ui::{bar::{FeedBar, FeedMulti}, EventListener}};
 
 #[derive(Clone, Debug)]
 pub struct Event {
@@ -48,22 +48,20 @@ impl FeedMulti<String> for Event {
   }
 }
 
-pub async fn step<P: AsRef<Path>>(client: reqwest::Client, pkg: &PkgBuild, cache_path: P, tracker: impl EventListener<FetchState>) -> Result<PathBuf> {
-  let target = cache_path.as_ref().join(&pkg.filename);
-  let mut task = http::DownloadTask::new(&pkg.url, &target, Some(pkg.sha256.clone()))?;
-  task.client(Some(client)).run(tracker).await?;
-  tokio::time::sleep(Duration::from_millis(1000)).await;
+pub async fn step<P: AsRef<Path>>(mirrors: &MirrorLists, pkg: &PkgBuild, cache_path: P, tracker: impl EventListener<FetchState>) -> Result<PathBuf> {
+  let req = FetchReq::Package(pkg.clone());
+  let target = req.target(cache_path.as_ref());
+  let _ = fetch_remote(mirrors, req, &target, tracker).await?;
   Ok(target)
 }
 
-#[tracing::instrument(level = "debug", skip_all, fields(cache_path = %cache_path.as_ref().display(), mirror = mirror.base_url))]
-pub async fn exec<'a, P: AsRef<Path>, I: IntoIterator<Item = (&'a PkgBuild, &'a PackageUrl)>>(mirror: &MirrorServer, pkgs: I, cache_path: P, tracker: impl EventListener<Event>) -> Result<Vec<PathBuf>> {
+#[tracing::instrument(level = "debug", skip_all, fields(cache_path = %cache_path.as_ref().display(), mirrors.len = mirrors.lists.len()))]
+pub async fn exec<'a, P: AsRef<Path>, I: IntoIterator<Item = (&'a PkgBuild, &'a PackageUrl)>>(mirrors: &MirrorLists, pkgs: I, cache_path: P, tracker: impl EventListener<Event>) -> Result<Vec<PathBuf>> {
   let mut result = Vec::new();
-  let client = mirror.client();
   for (i, (pkg, url)) in pkgs.into_iter().enumerate() {
     tracker.on_event(Event::overall(&format!("now {}", url.name), i as _, None));
     tracker.on_event(Event::task(&pkg.filename, 0, Some(url.pkg_size)));
-    let value = step(client.clone(), pkg, &cache_path, |e: FetchState| tracker.on_event(Event::task(&pkg.filename, e.current, Some(e.max)))).await?;
+    let value = step(mirrors, pkg, &cache_path, |e: FetchState| tracker.on_event(Event::task(&pkg.filename, e.current, Some(e.max)))).await?;
     tracker.on_event(Event::finish(Some(&pkg.filename)));
     result.push(value)
   }
@@ -77,15 +75,15 @@ pub async fn test_download() {
   let arch = ARCH;
   std::fs::create_dir_all(cache_path).ok();
   let active_pb = crate::tests::init_logger(Some("warn"));
-  let mirror = MirrorServer::new(MIRROR.0, MIRROR.1);
+  let mirrors = get_mirrors();
   let query = ["wget"];
   let formulas = crate::io::read::read_formulas(crate::tests::FORMULA_FILE).unwrap();
   let resolved = super::resolve::exec(&formulas, query, ()).await.unwrap().resolved;
-  let urls = super::probe::exec(cache_path, &mirror, arch, &resolved, ()).await.unwrap();
+  let urls = super::probe::exec(cache_path, &mirrors, arch, &resolved, ()).await.unwrap();
   warn!("start downloading");
   let result = crate::ui::with_progess_multibar(active_pb, Event::new(resolved.len()), |tracker| async {
     let tmp = urls.iter().map(|i| (&i.pkg, &i.url)).collect::<Vec<_>>();
-    exec(&mirror, tmp, cache_path, tracker).await
+    exec(&mirrors, tmp, cache_path, tracker).await
   }, ()).await.unwrap();
   info!(len=result.len());
   assert_eq!(result.len(), resolved.len());

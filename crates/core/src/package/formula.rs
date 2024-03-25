@@ -362,7 +362,7 @@ pub struct Formula {
 fn test_formula() {
   crate::tests::init_logger(None);
   // TODO: enable brotli?
-  let filename = "formula.json";
+  let filename = "cache/formula.json";
   let formulas = crate::io::read::read_formulas(filename).unwrap();
   info!(message="parsed", formula.len=formulas.len());
   assert_ne!(formulas.len(), 0);

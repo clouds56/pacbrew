@@ -11,12 +11,22 @@ pub mod io;
 #[cfg(test)]
 mod tests {
   use std::{str::FromStr, sync::{Arc, RwLock}};
-  use crate::{package::mirror::MirrorType, ui::bar::{PbWriter, Suspendable}};
+  use crate::{io::fetch::MirrorLists, package::{formula::Formula, mirror::{MirrorServer, MirrorType}}, ui::bar::{PbWriter, Suspendable}};
 
-  pub static FORMULA_FILE: &str = "formula.json";
+  pub static FORMULA_FILE: &str = "cache/formula.json";
   pub static CACHE_PATH: &str = "cache";
   pub static ARCH: &str = "arm64_sonoma";
   pub static MIRROR: (MirrorType, &str) = (MirrorType::Bottle, "https://mirrors.ustc.edu.cn/homebrew-bottles");
+
+  pub fn get_mirrors() -> MirrorLists {
+    MirrorLists {
+      lists: vec![MirrorServer::new(MIRROR.0, MIRROR.1)]
+    }
+  }
+
+  pub fn get_formulas() -> Vec<Formula> {
+    crate::io::read::read_formulas(FORMULA_FILE).unwrap()
+  }
 
   pub fn init_logger(env_filter: Option<&str>) -> Arc<RwLock<Option<Suspendable>>> {
     use tracing_subscriber::fmt::format::FmtSpan;

@@ -55,9 +55,10 @@ pub async fn exec<'a, I: IntoIterator<Item = &'a str>>(formulas: &[Formula], que
 
 #[tokio::test]
 async fn test_resolve() {
-  let active_pb = crate::tests::init_logger(None);
+  use crate::tests::*;
+  let active_pb = init_logger(None);
   let query = ["wget", "llvm", "python", "ffmpeg"];
-  let formulas = crate::io::read::read_formulas("formula.json").unwrap();
+  let formulas = get_formulas();
 
   let init = Event { name: String::new(), current: 0, max: Some(query.len()) };
   let result = crate::ui::with_progess_bar(active_pb.clone(), init, |tracker| async move {
