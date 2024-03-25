@@ -1,6 +1,12 @@
 use indicatif::ProgressStyle;
 
 pub mod update;
+pub mod download;
+
+#[derive(Debug, Clone, clap::Args)]
+pub struct QueryArgs {
+  pub names: Vec<String>,
+}
 
 pub enum PbStyle {
   Items,

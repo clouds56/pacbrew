@@ -59,7 +59,7 @@ pub async fn step<P: AsRef<Path>>(mirrors: &MirrorLists, pkg: &PkgBuild, cache_p
 pub async fn exec<'a, P: AsRef<Path>, I: IntoIterator<Item = (&'a PkgBuild, &'a PackageUrl)>>(mirrors: &MirrorLists, pkgs: I, cache_path: P, tracker: impl EventListener<Event>) -> Result<Vec<PathBuf>> {
   let mut result = Vec::new();
   for (i, (pkg, url)) in pkgs.into_iter().enumerate() {
-    tracker.on_event(Event::overall(&format!("now {}", url.name), i as _, None));
+    tracker.on_event(Event::overall(&format!("now {}", pkg.name), i as _, None));
     tracker.on_event(Event::task(&pkg.filename, 0, Some(url.pkg_size)));
     let value = step(mirrors, pkg, &cache_path, |e: FetchState| tracker.on_event(Event::task(&pkg.filename, e.current, Some(e.max)))).await?;
     tracker.on_event(Event::finish(Some(&pkg.filename)));
@@ -78,10 +78,10 @@ pub async fn test_download() {
   let mirrors = get_mirrors();
   let query = ["wget"];
   let formulas = crate::io::read::read_formulas(crate::tests::FORMULA_FILE).unwrap();
-  let resolved = super::resolve::exec(&formulas, query, ()).await.unwrap().resolved;
+  let resolved = super::resolve::exec(&formulas, query, ()).await.unwrap().packages;
   let urls = super::probe::exec(cache_path, &mirrors, arch, &resolved, ()).await.unwrap();
   warn!("start downloading");
-  let result = crate::ui::with_progess_multibar(active_pb, Event::new(resolved.len()), |tracker| async {
+  let result = crate::ui::with_progess_multibar(active_pb, None, Event::new(resolved.len()), |tracker| async {
     let tmp = urls.iter().map(|i| (&i.pkg, &i.url)).collect::<Vec<_>>();
     exec(&mirrors, tmp, cache_path, tracker).await
   }, ()).await.unwrap();

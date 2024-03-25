@@ -135,28 +135,32 @@ pub trait FeedMulti<S: Clone>: FeedBar {
 
 pub struct MultiBar<S> {
   handle: MultiProgress,
+  style: Option<ProgressStyle>,
   state: std::sync::Mutex<HashMap<S, ProgressBar>>,
   overall: std::sync::Mutex<Option<ProgressBar>>,
   history: std::sync::Mutex<Vec<ProgressBar>>,
 }
 impl<S: Hash + Eq + Clone + Debug> MultiBar<S> {
-  fn new(handle: MultiProgress) -> Self {
+  fn new(handle: MultiProgress, style: Option<ProgressStyle>) -> Self {
     Self {
-      handle,
+      handle, style,
       state: std::sync::Mutex::new(HashMap::new()),
       overall: std::sync::Mutex::new(None),
       history: std::sync::Mutex::new(Vec::new()),
     }
   }
-  fn get_overall(&self) -> (bool, ProgressBar) {
+  fn get_overall(&self) -> ProgressBar {
     let mut overall = self.overall.lock().unwrap();
     match overall.as_ref() {
-      Some(pb) => (false, pb.clone()),
+      Some(pb) => pb.clone(),
       _ => {
         debug!("create overall");
         let pb = self.handle.add(ProgressBar::new(0));
+        if let Some(style) = &self.style {
+          pb.set_style(style.clone());
+        }
         overall.replace(pb.clone());
-        (true, pb)
+        pb
       }
     }
   }
@@ -167,18 +171,21 @@ impl<S: Hash + Eq + Clone + Debug> MultiBar<S> {
       _ => { warn!("multibar: remove overall not present") }
     }
   }
-  fn get_pb(&self, tag: &Option<S>) -> (bool, ProgressBar) {
+  fn get_pb(&self, tag: &Option<S>) -> ProgressBar {
     let mut state = self.state.lock().unwrap();
     let Some(tag) = tag.as_ref() else {
       return self.get_overall()
     };
     if let Some(pb) = state.get(tag) {
-      (false, pb.clone())
+      pb.clone()
     } else {
       let index = if self.overall.lock().unwrap().is_some() { 1 } else { 0 };
       let pb = self.handle.insert_from_back(index, ProgressBar::new(0));
       state.insert(tag.clone(), pb.clone());
-      (true, pb)
+      if let Some(style) = &self.style {
+        pb.set_style(style.clone());
+      }
+      pb
     }
   }
   fn remove_pb(&self, tag: &Option<S>) {
@@ -189,6 +196,8 @@ impl<S: Hash + Eq + Clone + Debug> MultiBar<S> {
       Some(pb) => {
         self.handle.remove(&pb);
         pb.set_draw_target(ProgressDrawTarget::stderr());
+        pb.finish();
+        trace!(current=?pb.position(), max=?pb.length(), message=?pb.message(), "finish pb");
         self.history.lock().unwrap().push(pb);
       },
       _ => { warn!("multibar: remove some tag not present") }
@@ -199,22 +208,22 @@ impl<S: Hash + Eq + Clone + Debug> MultiBar<S> {
 impl<S: Hash + Eq + Clone + Debug, T: FeedMulti<S> + Clone> EventListener<T> for MultiBar<S> {
   fn on_event(&self, event: T) {
     let tag = event.tag();
-    let (init, pb) = self.get_pb(&tag);
-    if init {
-      info!(message="init pb", ?tag);
-      if let Some(style) = T::style() {
-        pb.set_style(style);
-      }
-    }
+    let pb = self.get_pb(&tag);
     pb.on_event(event.clone());
     if event.graduate() {
-      info!(message="finish pb", ?tag);
-      self.remove_pb(&tag);
+      trace!(message="finish pb", ?tag);
       pb.finish();
+      self.remove_pb(&tag);
     }
   }
 }
-pub async fn with_progess_multibar<'a, S, T, R, F, Fut>(active: ActiveSuspendable, init: T, f: F, tracker: impl EventListener<T>) -> R
+pub async fn with_progess_multibar<'a, S, T, R, F, Fut>(
+  active: ActiveSuspendable,
+  style: Option<ProgressStyle>,
+  init: T,
+  f: F,
+  tracker: impl EventListener<T>
+) -> R
 where
   S: Hash + Eq + Clone + Debug,
   T: Clone + 'static + FeedMulti<S> + Debug,
@@ -228,8 +237,9 @@ where
       Pin<Box<dyn Future<Output=R> + Send + 'static>>
     >(Box::pin(f))
   }
+  let style = style.or_else(|| T::style());
   let pb_multi = MultiProgress::new();
-  let pb_multi_bar = MultiBar::new(pb_multi.clone());
+  let pb_multi_bar = MultiBar::new(pb_multi.clone(), style);
   let old = active.write().unwrap().replace(Suspendable::MultiProgress(pb_multi));
   pb_multi_bar.on_event(init.clone());
   let pb_tracker = Tracker::new(init);
@@ -272,7 +282,7 @@ fn test_multibar() {
   }
   let handle = MultiProgress::new();
   active_pb.write().unwrap().replace(Suspendable::MultiProgress(handle.clone()));
-  let multi_bar = MultiBar::new(handle);
+  let multi_bar = MultiBar::new(handle, None);
   let events = vec![
     Event { name: Some(1), position: 1, length: 10, finish: false },
     Event { name: Some(1), position: 5, length: 10, finish: false },

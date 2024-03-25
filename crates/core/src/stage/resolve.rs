@@ -1,4 +1,4 @@
-use std::{collections::{HashMap, HashSet, VecDeque}, time::Duration};
+use std::{borrow::Borrow, collections::{HashMap, HashSet, VecDeque}, time::Duration};
 
 ///! query would find in Vec<Formula> to get correspond Package
 ///! with there dependences.
@@ -7,12 +7,20 @@ use crate::{error::Result, package::{formula::Formula, package::PackageOffline},
 
 pub struct Value {
   pub names: Vec<String>,
-  pub resolved: Vec<PackageOffline>,
+  pub packages: Vec<PackageOffline>,
 }
 
 #[tracing::instrument(level = "debug", skip_all, fields(formulas.len=formulas.len()))]
-pub async fn exec<'a, I: IntoIterator<Item = &'a str>>(formulas: &[Formula], query: I, tracker: impl EventListener<Event>) -> Result<Value> {
-  let mut queue = VecDeque::from_iter(query);
+pub async fn exec<'a, S, I>(
+  formulas: &[Formula],
+  query: I,
+  tracker: impl EventListener<Event>
+) -> Result<Value>
+where
+  S: Borrow<str> + ?Sized + 'a,
+  I: IntoIterator<Item = &'a S>,
+{
+  let mut queue = VecDeque::from_iter(query.into_iter().map(|i| i.borrow()));
   let mut direct_names = queue.iter().map(|&i| (i, i)).collect::<HashMap<_,_>>();
   let mut visited = HashSet::<&str>::new();
   let mut formula_index = formulas.iter().map(|f| (f.name.as_str(), f)).collect::<HashMap<_, _>>();
@@ -49,7 +57,7 @@ pub async fn exec<'a, I: IntoIterator<Item = &'a str>>(formulas: &[Formula], que
   // TODO: convert formula to package
   Ok(Value {
     names: direct_names,
-    resolved: collected.into_iter().map(|f| f.into()).collect(),
+    packages: collected.into_iter().map(|f| f.into()).collect(),
   })
 }
 
@@ -66,9 +74,9 @@ async fn test_resolve() {
   }, ()).await.unwrap();
 
   info!(names=result.names.join(","));
-  info!(resolved=result.resolved.iter().map(|f| f.name.as_str()).collect::<Vec<_>>().join(","));
-  result.resolved.iter().for_each(|package| trace!(?package));
+  info!(resolved=result.packages.iter().map(|f| f.name.as_str()).collect::<Vec<_>>().join(","));
+  result.packages.iter().for_each(|package| trace!(?package));
   assert_eq!(result.names.len(), query.len());
   assert_eq!(result.names.iter().map(|i| i.split('@').next().unwrap()).collect::<HashSet<_>>(), query.iter().cloned().collect());
-  assert_eq!(result.resolved.len(), result.resolved.iter().map(|f| &f.name).collect::<HashSet<_>>().len())
+  assert_eq!(result.packages.len(), result.packages.iter().map(|f| &f.name).collect::<HashSet<_>>().len())
 }

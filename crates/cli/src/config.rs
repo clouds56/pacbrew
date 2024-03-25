@@ -22,6 +22,11 @@ pub struct BaseConfig {
   pub cache: PathBuf,
   pub prefix: PathBuf,
   pub db: PathBuf,
+  pub arch: String,
+}
+
+impl BaseConfig {
+  pub fn formula_json(&self) -> PathBuf { self.cache.join("formula.json") }
 }
 
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]

@@ -8,7 +8,7 @@ use super::Event;
 
 #[tracing::instrument(level = "trace", skip_all, fields(mirrors.len = mirrors.len(), package = %pkg.name, arch = %pkg.arch))]
 pub async fn step(mirrors: &MirrorLists, pkg: &PkgBuild) -> Result<PackageUrl> {
-  info!(?pkg);
+  trace!(?pkg);
   let req = FetchReq::Package(pkg.clone());
   for (client, url) in mirrors.url_iter(req.clone()) {
     let result: Result<_> = async move {
@@ -39,7 +39,17 @@ pub struct Value {
 }
 
 #[tracing::instrument(level = "debug", skip_all, fields(cache_dir = %cache_dir.as_ref().display(), arch = %arch))]
-pub async fn exec<'a, P: AsRef<Path>, I: IntoIterator<Item = &'a PackageOffline> + Clone>(cache_dir: P, mirrors: &MirrorLists, arch: &str, packages: I, tracker: impl EventListener<Event>) -> Result<Vec<Value>> {
+pub async fn exec<'a, P, I>(
+  cache_dir: P,
+  mirrors: &MirrorLists,
+  arch: &str,
+  packages: I,
+  tracker: impl EventListener<Event>
+) -> Result<Vec<Value>>
+where
+  P: AsRef<Path>,
+  I: IntoIterator<Item = &'a PackageOffline> + Clone,
+{
   let mut result = Vec::new();
   let urls = packages.clone().into_iter().map(|package| {
     package.find_arch(arch).ok_or_else(|| Error::package_arch_not_found(package, &arch))
@@ -74,7 +84,7 @@ async fn test_probe() {
   let mirrors = get_mirrors();
   let query = ["llvm"];
   let formulas = crate::io::read::read_formulas(crate::tests::FORMULA_FILE).unwrap();
-  let resolved = super::resolve::exec(&formulas, query, ()).await.unwrap().resolved;
+  let resolved = super::resolve::exec(&formulas, query, ()).await.unwrap().packages;
   let result = crate::ui::with_progess_bar(active_pb, None, Event::new(resolved.len()), |tracker| async {
     exec(cache_path, &mirrors, arch, &resolved, tracker).await
   }, ()).await.unwrap();

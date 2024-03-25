@@ -18,6 +18,7 @@ pub struct Args {
 #[derive(Debug, Clone, clap::Subcommand)]
 pub enum Command {
   Update,
+  Download(command::QueryArgs),
 }
 
 lazy_static::lazy_static! {
@@ -28,6 +29,7 @@ lazy_static::lazy_static! {
 async fn main() {
   dotenvy::dotenv().ok();
   let _ = tracing_subscriber::fmt()
+    .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
     .with_span_events(FmtSpan::NEW | FmtSpan::CLOSE)
     .with_writer(move || PbWriter::new(ACTIVE_PB.read().unwrap().clone(), std::io::stderr()))
     .init();
@@ -42,5 +44,6 @@ async fn main() {
   };
   match args.command {
     Command::Update => command::update::run(&config, &mirrors).await.unwrap(),
+    Command::Download(query) => command::download::run(&config, &mirrors, query).await.unwrap(),
   }
 }
