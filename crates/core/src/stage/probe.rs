@@ -20,7 +20,7 @@ async fn test_probe() {
   crate::tests::init_logger();
   let mirror = MirrorServer::ghcr();
   let formulas = crate::io::read::read_formulas(crate::tests::FORMULA_FILE).unwrap();
-  let resolved = super::resolve::exec(&formulas, ["llvm"], None).await.unwrap().resolved;
+  let resolved = super::resolve::exec(&formulas, ["llvm"], ()).await.unwrap().resolved;
   let size = step(&mirror, resolved.get(0).unwrap(), "arm64_sonoma".to_string()).await.unwrap();
   info!(size)
 }

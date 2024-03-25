@@ -3,6 +3,8 @@ use std::sync::{Arc, Mutex};
 use futures::FutureExt;
 use tokio::sync::broadcast::{error::RecvError, Receiver, Sender};
 
+use super::EventListener;
+
 pub struct Tracker<T> {
   init: Arc<Mutex<T>>,
   tx: Sender<T>,
@@ -18,6 +20,12 @@ impl<T: Clone> Tracker<T> {
   pub fn new(init: T) -> Self {
     let (tx, _) = tokio::sync::broadcast::channel(1024);
     Self { init: Arc::new(Mutex::new(init)), tx }
+  }
+}
+
+impl<T: Clone + 'static> EventListener<T> for Tracker<T> {
+  fn on_event(&self, event: T) {
+    self.send(event);
   }
 }
 

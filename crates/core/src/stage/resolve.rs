@@ -3,7 +3,7 @@ use std::{collections::{HashMap, HashSet, VecDeque}, time::Duration};
 ///! query would find in Vec<Formula> to get correspond Package
 ///! with there dependences.
 
-use crate::{error::Result, package::{formula::Formula, package::PackageOffline}, ui::tracker::Tracker};
+use crate::{error::Result, package::{formula::Formula, package::PackageOffline}, ui::{bar::FeedBar, EventListener}};
 
 pub struct Value {
   pub names: Vec<String>,
@@ -17,8 +17,14 @@ pub struct Event {
   pub max: usize,
 }
 
+impl FeedBar for Event {
+  fn message(&self) -> Option<String> { Some(self.name.clone()) }
+  fn position(&self) -> Option<u64> { Some(self.current as _) }
+  fn length(&self) -> Option<u64> { Some(self.max as _) }
+}
+
 #[tracing::instrument(level = "debug", skip_all, fields(formulas.len=formulas.len()))]
-pub async fn exec<'a, I: IntoIterator<Item = &'a str>>(formulas: &[Formula], query: I, progress: Option<Tracker<Event>>) -> Result<Value> {
+pub async fn exec<'a, I: IntoIterator<Item = &'a str>>(formulas: &[Formula], query: I, tracker: impl EventListener<Event>) -> Result<Value> {
   let mut queue = VecDeque::from_iter(query);
   let mut direct_names = queue.iter().map(|&i| (i, i)).collect::<HashMap<_,_>>();
   let mut visited = HashSet::<&str>::new();
@@ -32,7 +38,7 @@ pub async fn exec<'a, I: IntoIterator<Item = &'a str>>(formulas: &[Formula], que
   let mut i = 0;
   while let Some(item) = queue.pop_front() {
     i += 1;
-    progress.as_ref().map(|p| p.send(Event { name: item.to_string(), current: i, max: i + queue.len() }));
+    tracker.on_event(Event { name: item.to_string(), current: i, max: i + queue.len() } );
     let formula = *formula_index.get(item).ok_or_else(|| crate::error::Error::package_not_found(item))?;
     if direct_names.contains_key(item) {
       direct_names.insert(item, &formula.full_name);
@@ -49,7 +55,7 @@ pub async fn exec<'a, I: IntoIterator<Item = &'a str>>(formulas: &[Formula], que
     queue.extend(deps);
     collected.push(formula.clone());
     // TODO: better parking method
-    tokio::time::sleep(Duration::from_millis(20)).await;
+    tokio::time::sleep(Duration::from_millis(0)).await;
   }
   let mut direct_names = direct_names.values().map(|i| i.to_string()).collect::<Vec<_>>();
   direct_names.sort();
@@ -61,21 +67,15 @@ pub async fn exec<'a, I: IntoIterator<Item = &'a str>>(formulas: &[Formula], que
 }
 
 #[tokio::test]
-async fn test_exec() {
-  crate::tests::init_logger();
+async fn test_resolve() {
+  let active_pb = crate::tests::init_logger();
   let query = ["wget", "llvm", "python", "ffmpeg"];
   let formulas = crate::io::read::read_formulas("formula.json").unwrap();
-  let pb = indicatif::ProgressBar::new(query.len() as _);
-  crate::tests::ACTIVE_PB.write().unwrap().replace(crate::ui::bar::Suspendable::ProgressBar(pb.clone()));
-  let tracker = Tracker::new(Event { name: String::new(), current: 0, max: query.len() });
-  let mut events = tracker.progress();
-  let handle = tokio::spawn(async move { exec(&formulas, query, Some(tracker)).await } );
-  while let Some(event) = events.recv().await {
-    pb.set_position(event.current as _);
-    pb.set_length(event.max as _);
-    pb.set_message(event.name);
-  }
-  let result = handle.await.unwrap().unwrap();
+
+  let init = Event { name: String::new(), current: 0, max: query.len() };
+  let result = crate::ui::bar::with_progess_bar(active_pb.clone(), init, |tracker| async move {
+    exec(&formulas, query, tracker).await
+  }).await.unwrap();
 
   info!(names=result.names.join(","));
   info!(resolved=result.resolved.iter().map(|f| f.name.as_str()).collect::<Vec<_>>().join(","));

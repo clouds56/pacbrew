@@ -1,4 +1,11 @@
-use indicatif::{MultiProgress, ProgressBar};
+use std::sync::{Arc, RwLock};
+
+use futures::Future;
+use indicatif::{MultiProgress, ProgressBar, ProgressStyle};
+
+use super::{tracker::Tracker, EventListener};
+
+pub type ActiveSuspendable = Arc<RwLock<Option<Suspendable>>>;
 
 pub struct PbWriter<W> {
   pb: Option<Suspendable>,
@@ -55,4 +62,53 @@ impl Suspendable {
       Suspendable::MultiProgress(pb) => pb.suspend(f),
     }
   }
+}
+
+pub trait FeedBar {
+  fn style() -> Option<ProgressStyle> {
+    None
+  }
+  fn message(&self) -> Option<String>;
+  fn position(&self) -> Option<u64>;
+  fn length(&self) -> Option<u64>;
+}
+
+impl<T: FeedBar> EventListener<T> for ProgressBar {
+  fn on_event(&self, event: T) {
+    if let Some(msg) = event.message() {
+      self.set_message(msg);
+    }
+    if let Some(len) = event.length() {
+      self.set_length(len);
+    }
+    if let Some(pos) = event.position() {
+      self.set_position(pos);
+    }
+  }
+}
+
+pub async fn with_progess_bar<'a, T, R, F, Fut>(active: ActiveSuspendable, init: T, f: F) -> R
+where
+  T: Clone + 'static + FeedBar,
+  F: FnOnce(Tracker<T>) -> Fut + 'a,
+  Fut: Future<Output = R> + Send + 'static,
+  R: Send + 'static,
+{
+  let pb = ProgressBar::new(0);
+  if let Some(style) = T::style() {
+    pb.set_style(style);
+  }
+  let old = active.write().unwrap().replace(Suspendable::ProgressBar(pb.clone()));
+  pb.on_event(init.clone());
+  let tracker = Tracker::new(init);
+  let mut events = tracker.progress();
+  let fut = f(tracker);
+  let handle = tokio::spawn(async move { fut.await });
+  while let Some(event) = events.recv().await {
+    pb.on_event(event);
+  }
+  pb.finish();
+  drop(pb);
+  *active.write().unwrap() = old;
+  handle.await.unwrap()
 }

@@ -110,7 +110,7 @@ pub async fn download_db<U: IntoUrl, P: AsRef<Path>>(url: U, path: P) -> Result<
 
 #[tokio::test]
 async fn test_download_db() {
-  crate::tests::init_logger();
+  let active_pb = crate::tests::init_logger();
 
   let url = std::env::var("TEST_DOWNLOAD_URL").unwrap_or("https://example.com".to_string());
   // let url = "https://formulae.brew.sh/api/formula.json".to_string();
@@ -118,7 +118,7 @@ async fn test_download_db() {
 
   let (handle, mut events) = download_db(&url, target).await.unwrap();
   let pb = indicatif::ProgressBar::new(100);
-  crate::tests::ACTIVE_PB.write().unwrap().replace(crate::ui::bar::Suspendable::ProgressBar(pb.clone()));
+  active_pb.write().unwrap().replace(crate::ui::bar::Suspendable::ProgressBar(pb.clone()));
   while let Some(event) = events.recv().await {
     pb.set_length(event.max);
     pb.set_position(event.current);
