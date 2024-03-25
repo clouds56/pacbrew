@@ -282,7 +282,7 @@ pub struct Formula {
   pub versions: Versions,
   /// possible keys: stable
   pub urls: HashMap<String, UrlInfo>,
-  pub revision: usize,
+  pub revision: u32,
   pub version_scheme: usize,
   /// keys match urls
   pub bottle: HashMap<String, Bottles>,
