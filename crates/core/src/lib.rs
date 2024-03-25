@@ -7,8 +7,9 @@ pub mod ui;
 pub mod package;
 pub mod stage;
 pub mod io {
-  pub mod fetch;
+  pub mod http;
   pub mod read;
+  pub mod remote;
 }
 
 #[cfg(test)]

@@ -2,7 +2,7 @@ use std::{path::{Path, PathBuf}, time::Duration};
 
 use indicatif::ProgressStyle;
 
-use crate::{error::Result, io::fetch::{self, DownloadState}, package::{mirror::MirrorServer, package::{PkgBuild, PackageUrl}}, ui::{bar::{FeedBar, FeedMulti}, EventListener}};
+use crate::{error::Result, io::http::{self, DownloadState}, package::{mirror::MirrorServer, package::{PkgBuild, PackageUrl}}, ui::{bar::{FeedBar, FeedMulti}, EventListener}};
 
 #[derive(Clone, Debug)]
 pub struct Event {
@@ -50,7 +50,7 @@ impl FeedMulti<String> for Event {
 
 pub async fn step<P: AsRef<Path>>(client: reqwest::Client, pkg: &PkgBuild, cache_path: P, tracker: impl EventListener<DownloadState>) -> Result<PathBuf> {
   let target = cache_path.as_ref().join(&pkg.filename);
-  let mut task = fetch::DownloadTask::new(&pkg.url, &target, Some(pkg.sha256.clone()))?;
+  let mut task = http::DownloadTask::new(&pkg.url, &target, Some(pkg.sha256.clone()))?;
   task.client(Some(client)).run(tracker).await?;
   tokio::time::sleep(Duration::from_millis(1000)).await;
   Ok(target)

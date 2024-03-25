@@ -1,4 +1,4 @@
-use crate::{io::fetch::DownloadTask, package::package::PackageOffline};
+use crate::{io::http::DownloadTask, package::package::PackageOffline};
 use std::{path::{Path, PathBuf}, result::Result as StdResult};
 
 pub type Result<T, E=Error> = StdResult<T, E>;
