@@ -14,7 +14,7 @@ pub trait ErrorDownloadExt<T> {
 
 impl<T> ErrorDownloadExt<T> for Result<T, reqwest::Error> {
   fn when_download(self, ctx: &DownloadTask) -> Result<T> {
-    self.map_err(|error| Error::DownloadFailed { task: ctx.clone(), error })
+    self.map_err(|error| Error::HttpDownloadFailed { task: ctx.clone(), error })
   }
 }
 

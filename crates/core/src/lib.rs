@@ -16,7 +16,7 @@ mod tests {
   pub static FORMULA_FILE: &str = "formula.json";
   pub static CACHE_PATH: &str = "cache";
   pub static ARCH: &str = "arm64_sonoma";
-  pub static MIRROR: (MirrorType, &str) = (MirrorType::Ghcr, "https://ghcr.io/v2/homebrew/core");
+  pub static MIRROR: (MirrorType, &str) = (MirrorType::Bottle, "https://mirrors.ustc.edu.cn/homebrew-bottles");
 
   pub fn init_logger(env_filter: Option<&str>) -> Arc<RwLock<Option<Suspendable>>> {
     use tracing_subscriber::fmt::format::FmtSpan;

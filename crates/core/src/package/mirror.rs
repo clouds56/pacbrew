@@ -8,7 +8,7 @@ pub enum MirrorType {
 pub struct MirrorServer {
   pub server_type: MirrorType,
   pub base_url: String,
-  pub api_url: Option<String>,
+  pub api_base_url: Option<String>,
 }
 
 impl MirrorServer {
@@ -16,20 +16,21 @@ impl MirrorServer {
     if server_type == MirrorType::Ghcr {
       warn!("should not use ghcr with custom base_url, please use MirrorServer::ghcr() instead");
     }
-    Self { server_type, base_url: base_url.to_string(), api_url: None }
+    Self { server_type, base_url: base_url.to_string(), api_base_url: None }
   }
   pub fn ghcr() -> Self {
     Self {
       server_type: MirrorType::Ghcr,
-      api_url: Some("https://formulae.brew.sh/api/formula.json".to_string()),
-      base_url: "https://ghcr.io/v2/homebrew/core".to_string(),
+      api_base_url: Some("https://formulae.brew.sh/api/".to_string()),
+      base_url: "https://ghcr.io/v2/homebrew/core/".to_string(),
     }
   }
 
-  pub fn api_formula(&self) -> Option<String> {
-    match self.server_type {
-      MirrorType::Ghcr | MirrorType::Oci => self.api_url.clone(),
-      MirrorType::Bottle => Some(format!("{}/api/formula.json", self.base_url)),
+  pub fn api_url(&self, target: &str) -> Option<String> {
+    match (self.server_type, &self.api_base_url) {
+      (_, Some(api_base_url)) => Some(format!("{}/{}", api_base_url.trim_end_matches('/'), target)),
+      (MirrorType::Bottle, _) => Some(format!("{}/api/{}", self.base_url.trim_end_matches('/'), target)),
+      _ => None
     }
   }
 

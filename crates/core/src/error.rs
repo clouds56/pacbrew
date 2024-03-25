@@ -1,4 +1,4 @@
-use crate::{io::http::DownloadTask, package::package::PackageOffline};
+use crate::{io::{fetch::FetchReq, http::DownloadTask}, package::package::PackageOffline};
 use std::{path::{Path, PathBuf}, result::Result as StdResult};
 
 pub type Result<T, E=Error> = StdResult<T, E>;
@@ -21,7 +21,7 @@ pub enum Error {
     inner: anyhow::Error,
   },
   #[error("download from {} to {} failed, caused by: {error}", .task.url, .task.filename.to_string_lossy())]
-  DownloadFailed {
+  HttpDownloadFailed {
     task: DownloadTask,
     #[source]
     error: reqwest::Error,
@@ -55,6 +55,8 @@ pub enum Error {
   },
   #[error("malformed url {}", .0)]
   MalformedUrl(String),
+  #[error("no available mirror for req {}", .0)]
+  MirrorFailed(FetchReq),
   #[error("package not found: {} with {:?} in [{}]", .name, .arch, .avaliable.join(","))]
   PackageNotFound {
     name: String,
