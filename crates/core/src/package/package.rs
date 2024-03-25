@@ -4,6 +4,8 @@ use super::formula::Formula;
 pub struct Package {
   #[serde(flatten)]
   pub offline: PackageOffline,
+  #[serde(flatten)]
+  pub url: PackageUrl,
 }
 
 #[derive(serde::Serialize, serde::Deserialize)]
@@ -85,5 +87,13 @@ impl PackageOffline {
   pub fn find_arch(&self, arch: &str) -> Option<&ArchUrl> {
     // TODO: arch to enum, and fallback
     self.tar.iter().find(|i| i.arch == arch)
+      .or_else(|| self.tar.iter().find(|i| i.arch == "all"))
   }
+}
+
+#[derive(Debug, serde::Serialize, serde::Deserialize)]
+pub struct PackageUrl {
+  pub name: String,
+  pub pkg_url: String,
+  pub pkg_size: u64,
 }

@@ -1,4 +1,4 @@
-use std::sync::{Arc, RwLock};
+use std::{pin::Pin, sync::{Arc, RwLock}};
 
 use futures::Future;
 use indicatif::{MultiProgress, ProgressBar, ProgressStyle};
@@ -91,9 +91,15 @@ pub async fn with_progess_bar<'a, T, R, F, Fut>(active: ActiveSuspendable, init:
 where
   T: Clone + 'static + FeedBar,
   F: FnOnce(Tracker<T>) -> Fut + 'a,
-  Fut: Future<Output = R> + Send + 'static,
+  Fut: Future<Output = R> + Send + 'a,
   R: Send + 'static,
 {
+  unsafe fn make_static<R>(f: impl Future<Output=R> + Send) -> Pin<Box<dyn Future<Output = R> + Send + 'static>> {
+    std::mem::transmute::<
+      Pin<Box<dyn Future<Output=R> + Send>>,
+      Pin<Box<dyn Future<Output=R> + Send + 'static>>
+    >(Box::pin(f))
+  }
   let pb = ProgressBar::new(0);
   if let Some(style) = T::style() {
     pb.set_style(style);
@@ -102,13 +108,14 @@ where
   pb.on_event(init.clone());
   let tracker = Tracker::new(init);
   let mut events = tracker.progress();
-  let fut = f(tracker);
-  let handle = tokio::spawn(async move { fut.await });
+  let fut = unsafe { make_static(f(tracker)) };
+  let handle = tokio::spawn(fut);
   while let Some(event) = events.recv().await {
     pb.on_event(event);
   }
   pb.finish();
   drop(pb);
   *active.write().unwrap() = old;
+  // since we make static, make sure the future is finished before returning
   handle.await.unwrap()
 }

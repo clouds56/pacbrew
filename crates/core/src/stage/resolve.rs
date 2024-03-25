@@ -3,24 +3,11 @@ use std::{collections::{HashMap, HashSet, VecDeque}, time::Duration};
 ///! query would find in Vec<Formula> to get correspond Package
 ///! with there dependences.
 
-use crate::{error::Result, package::{formula::Formula, package::PackageOffline}, ui::{bar::FeedBar, EventListener}};
+use crate::{error::Result, package::{formula::Formula, package::PackageOffline}, stage::Event, ui::EventListener};
 
 pub struct Value {
   pub names: Vec<String>,
   pub resolved: Vec<PackageOffline>,
-}
-
-#[derive(Debug, Clone)]
-pub struct Event {
-  pub name: String,
-  pub current: usize,
-  pub max: usize,
-}
-
-impl FeedBar for Event {
-  fn message(&self) -> Option<String> { Some(self.name.clone()) }
-  fn position(&self) -> Option<u64> { Some(self.current as _) }
-  fn length(&self) -> Option<u64> { Some(self.max as _) }
 }
 
 #[tracing::instrument(level = "debug", skip_all, fields(formulas.len=formulas.len()))]
@@ -38,7 +25,7 @@ pub async fn exec<'a, I: IntoIterator<Item = &'a str>>(formulas: &[Formula], que
   let mut i = 0;
   while let Some(item) = queue.pop_front() {
     i += 1;
-    tracker.on_event(Event { name: item.to_string(), current: i, max: i + queue.len() } );
+    tracker.on_event(Event { name: item.to_string(), current: i, max: Some(i + queue.len()) } );
     let formula = *formula_index.get(item).ok_or_else(|| crate::error::Error::package_not_found(item))?;
     if direct_names.contains_key(item) {
       direct_names.insert(item, &formula.full_name);
@@ -72,7 +59,7 @@ async fn test_resolve() {
   let query = ["wget", "llvm", "python", "ffmpeg"];
   let formulas = crate::io::read::read_formulas("formula.json").unwrap();
 
-  let init = Event { name: String::new(), current: 0, max: query.len() };
+  let init = Event { name: String::new(), current: 0, max: Some(query.len()) };
   let result = crate::ui::bar::with_progess_bar(active_pb.clone(), init, |tracker| async move {
     exec(&formulas, query, tracker).await
   }).await.unwrap();
