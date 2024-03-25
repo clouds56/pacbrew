@@ -1,6 +1,6 @@
 
 use std::path::{Path, PathBuf};
-use crate::{error::{Error, ErrorExt, Result}, progress::{Events, Progress, ProgressTrack}};
+use crate::{error::{Error, ErrorExt, Result}, ui::tracker::{Events, Tracker}};
 
 use futures::StreamExt as _;
 use reqwest::{IntoUrl, Url};
@@ -33,7 +33,7 @@ pub struct DownloadTask {
   pub filename: PathBuf,
   pub sha256: Option<String>,
   pub force: bool,
-  pub tracker: Option<Progress<DownloadState>>,
+  pub tracker: Option<Tracker<DownloadState>>,
 }
 
 impl Clone for DownloadTask {
@@ -43,7 +43,7 @@ impl Clone for DownloadTask {
       filename: self.filename.clone(),
       sha256: self.sha256.clone(),
       force: self.force.clone(),
-      tracker: Some(Progress::new(Default::default())),
+      tracker: Some(Tracker::new(Default::default())),
     }
   }
 }
@@ -52,7 +52,7 @@ impl DownloadTask {
   pub fn new<U: IntoUrl, P: Into<PathBuf>>(url: U, filename: P, sha256: Option<String>) -> Result<Self> {
     let url = into_url(url)?;
     let filename = filename.into();
-    Ok(Self { url, filename, sha256, force: false, tracker: Some(Progress::new(Default::default())) })
+    Ok(Self { url, filename, sha256, force: false, tracker: Some(Tracker::new(Default::default())) })
   }
 
   pub fn force(&mut self, force: bool) -> &mut Self {
@@ -118,7 +118,7 @@ async fn test_download_db() {
 
   let (handle, mut events) = download_db(&url, target).await.unwrap();
   let pb = indicatif::ProgressBar::new(100);
-  crate::tests::ACTIVE_PB.write().unwrap().replace(crate::pb::Suspendable::ProgressBar(pb.clone()));
+  crate::tests::ACTIVE_PB.write().unwrap().replace(crate::ui::bar::Suspendable::ProgressBar(pb.clone()));
   while let Some(event) = events.recv().await {
     pb.set_length(event.max);
     pb.set_position(event.current);

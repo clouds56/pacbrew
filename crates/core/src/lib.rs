@@ -2,8 +2,7 @@
 extern crate tracing;
 
 pub mod error;
-pub mod progress;
-pub mod pb;
+pub mod ui;
 
 pub mod package;
 pub mod stage;
@@ -15,7 +14,7 @@ pub mod io {
 #[cfg(test)]
 mod tests {
   use std::str::FromStr;
-  use crate::pb::{PbWriter, Suspendable};
+  use crate::ui::bar::{PbWriter, Suspendable};
 
   pub static FORMULA_FILE: &str = "formula.json";
   pub static ACTIVE_PB: std::sync::RwLock<Option<Suspendable>> = std::sync::RwLock::new(None);

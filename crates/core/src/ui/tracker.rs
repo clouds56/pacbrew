@@ -3,39 +3,34 @@ use std::sync::{Arc, Mutex};
 use futures::FutureExt;
 use tokio::sync::broadcast::{error::RecvError, Receiver, Sender};
 
-pub struct Progress<T> {
+pub struct Tracker<T> {
   init: Arc<Mutex<T>>,
   tx: Sender<T>,
 }
 
-impl<T: std::fmt::Debug> std::fmt::Debug for Progress<T> {
+impl<T: std::fmt::Debug> std::fmt::Debug for Tracker<T> {
   fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
     f.debug_struct("ProgressTracker").field("init", &self.init).field("tx", &"Sender").finish()
   }
 }
 
-impl<T: Clone> Progress<T> {
+impl<T: Clone> Tracker<T> {
   pub fn new(init: T) -> Self {
     let (tx, _) = tokio::sync::broadcast::channel(1024);
     Self { init: Arc::new(Mutex::new(init)), tx }
   }
 }
 
-impl<T: Clone + 'static> ProgressTrack<T> for Progress<T> {
-  fn send(&self, event: T) -> bool {
+impl<T: Clone + 'static> Tracker<T> {
+  pub fn send(&self, event: T) -> bool {
     *self.init.lock().unwrap() = event.clone();
     self.tx.send(event).is_ok()
   }
 
-  fn progress(&self) -> Events<T> {
+  pub fn progress(&self) -> Events<T> {
     let stream = self.tx.subscribe();
     Events { init: self.init.clone(), stream, lagged: false }
   }
-}
-
-pub trait ProgressTrack<T> {
-  fn send(&self, event: T) -> bool;
-  fn progress(&self) -> Events<T>;
 }
 
 pub struct Events<T> {
