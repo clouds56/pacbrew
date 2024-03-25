@@ -17,6 +17,7 @@ mod tests {
   use std::str::FromStr;
   use crate::pb::{PbWriter, Suspendable};
 
+  pub static FORMULA_FILE: &str = "formula.json";
   pub static ACTIVE_PB: std::sync::RwLock<Option<Suspendable>> = std::sync::RwLock::new(None);
 
   pub fn init_logger() {
