@@ -1,7 +1,7 @@
-use std::{pin::Pin, sync::{Arc, RwLock}};
+use std::{collections::HashMap, fmt::Debug, hash::Hash, pin::Pin, sync::{Arc, RwLock}, time::Duration};
 
 use futures::Future;
-use indicatif::{MultiProgress, ProgressBar, ProgressStyle};
+use indicatif::{MultiProgress, ProgressBar, ProgressDrawTarget, ProgressStyle};
 
 use super::{tracker::Tracker, EventListener};
 
@@ -119,4 +119,179 @@ where
   *active.write().unwrap() = old;
   // since we make static, make sure the future is finished before returning
   handle.await.unwrap()
+}
+
+pub trait FeedMulti<S: Clone>: FeedBar {
+  fn graduate(&self) -> bool;
+  // None means overall
+  fn tag(&self) -> Option<S>;
+}
+
+pub struct MultiBar<S> {
+  handle: MultiProgress,
+  state: std::sync::Mutex<HashMap<S, ProgressBar>>,
+  overall: std::sync::Mutex<Option<ProgressBar>>,
+  history: std::sync::Mutex<Vec<ProgressBar>>,
+}
+impl<S: Hash + Eq + Clone + Debug> MultiBar<S> {
+  fn new(handle: MultiProgress) -> Self {
+    Self {
+      handle,
+      state: std::sync::Mutex::new(HashMap::new()),
+      overall: std::sync::Mutex::new(None),
+      history: std::sync::Mutex::new(Vec::new()),
+    }
+  }
+  fn get_overall(&self) -> (bool, ProgressBar) {
+    let mut overall = self.overall.lock().unwrap();
+    match overall.as_ref() {
+      Some(pb) => (false, pb.clone()),
+      _ => {
+        debug!("create overall");
+        let pb = self.handle.add(ProgressBar::new(0));
+        overall.replace(pb.clone());
+        (true, pb)
+      }
+    }
+  }
+  fn remove_overall(&self) {
+    let mut overall = self.overall.lock().unwrap();
+    match overall.take() {
+      Some(pb) => self.handle.remove(&pb),
+      _ => { warn!("multibar: remove overall not present") }
+    }
+  }
+  fn get_pb(&self, tag: &Option<S>) -> (bool, ProgressBar) {
+    let mut state = self.state.lock().unwrap();
+    let Some(tag) = tag.as_ref() else {
+      return self.get_overall()
+    };
+    if let Some(pb) = state.get(tag) {
+      (false, pb.clone())
+    } else {
+      let index = if self.overall.lock().unwrap().is_some() { 1 } else { 0 };
+      let pb = self.handle.insert_from_back(index, ProgressBar::new(0));
+      state.insert(tag.clone(), pb.clone());
+      (true, pb)
+    }
+  }
+  fn remove_pb(&self, tag: &Option<S>) {
+    let Some(tag) = tag.as_ref() else {
+      return self.remove_overall()
+    };
+    match self.state.lock().unwrap().remove(tag) {
+      Some(pb) => {
+        self.handle.remove(&pb);
+        pb.set_draw_target(ProgressDrawTarget::stderr());
+        self.history.lock().unwrap().push(pb);
+      },
+      _ => { warn!("multibar: remove some tag not present") }
+    }
+  }
+
+}
+impl<S: Hash + Eq + Clone + Debug, T: FeedMulti<S> + Clone> EventListener<T> for MultiBar<S> {
+  fn on_event(&self, event: T) {
+    let tag = event.tag();
+    let (init, pb) = self.get_pb(&tag);
+    if init {
+      info!(message="init pb", ?tag);
+      if let Some(style) = T::style() {
+        pb.set_style(style);
+      }
+    }
+    pb.on_event(event.clone());
+    if event.graduate() {
+      info!(message="finish pb", ?tag);
+      self.remove_pb(&tag);
+      pb.finish();
+    }
+  }
+}
+pub async fn with_progess_multibar<'a, S, T, R, F, Fut>(active: ActiveSuspendable, init: T, f: F, tracker: impl EventListener<T>) -> R
+where
+  S: Hash + Eq + Clone + Debug,
+  T: Clone + 'static + FeedMulti<S> + Debug,
+  F: FnOnce(Tracker<T>) -> Fut + 'a,
+  Fut: Future<Output = R> + Send + 'a,
+  R: Send + 'static,
+{
+  unsafe fn make_static<R>(f: impl Future<Output=R> + Send) -> Pin<Box<dyn Future<Output = R> + Send + 'static>> {
+    std::mem::transmute::<
+      Pin<Box<dyn Future<Output=R> + Send>>,
+      Pin<Box<dyn Future<Output=R> + Send + 'static>>
+    >(Box::pin(f))
+  }
+  let pb_multi = MultiProgress::new();
+  let pb_multi_bar = MultiBar::new(pb_multi.clone());
+  let old = active.write().unwrap().replace(Suspendable::MultiProgress(pb_multi));
+  pb_multi_bar.on_event(init.clone());
+  let pb_tracker = Tracker::new(init);
+  let mut events = pb_tracker.progress();
+  let fut = unsafe { make_static(f(pb_tracker)) };
+  let handle = tokio::spawn(fut);
+  while let Some(event) = events.recv().await {
+    debug!(?event);
+    pb_multi_bar.on_event(event.clone());
+    tracker.on_event(event);
+  }
+  pb_multi_bar.handle.clear().ok();
+  drop(pb_multi_bar);
+  *active.write().unwrap() = old;
+  // since we make static, make sure the future is finished before returning
+  handle.await.unwrap()
+}
+
+#[test]
+fn test_multibar() {
+  let active_pb = crate::tests::init_logger(None);
+  #[derive(Clone, PartialEq, Eq, Debug)]
+  pub struct Event {
+    pub name: Option<i32>,
+    pub position: u64,
+    pub length: u64,
+    pub finish: bool,
+  }
+  impl FeedBar for Event {
+    fn style() -> Option<ProgressStyle> {
+      Some(ProgressStyle::default_bar().template("[{bar:40.cyan/blue}] {pos}/{len} {msg}").unwrap())
+    }
+    fn message(&self) -> Option<String> { format!("{:?}", self.name).into() }
+    fn position(&self) -> Option<u64> { self.position.into() }
+    fn length(&self) -> Option<u64> { self.length.into() }
+  }
+  impl FeedMulti<i32> for Event {
+    fn graduate(&self) -> bool { self.finish }
+    fn tag(&self) -> Option<i32> { self.name }
+  }
+  let handle = MultiProgress::new();
+  active_pb.write().unwrap().replace(Suspendable::MultiProgress(handle.clone()));
+  let multi_bar = MultiBar::new(handle);
+  let events = vec![
+    Event { name: Some(1), position: 1, length: 10, finish: false },
+    Event { name: Some(1), position: 5, length: 10, finish: false },
+    Event { name: Some(1), position: 7, length: 10, finish: false },
+
+    Event { name: Some(2), position: 1, length: 10, finish: false },
+    Event { name: Some(2), position: 5, length: 10, finish: false },
+    Event { name: Some(2), position: 7, length: 10, finish: false },
+    Event { name: Some(2), position: 7, length: 10, finish: true },
+
+    Event { name: Some(1), position: 7, length: 10, finish: true },
+
+    Event { name: Some(3), position: 1, length: 10, finish: false },
+    Event { name: Some(3), position: 5, length: 10, finish: false },
+    Event { name: Some(3), position: 7, length: 10, finish: false },
+    Event { name: Some(3), position: 7, length: 10, finish: true },
+
+    Event { name: Some(4), position: 1, length: 10, finish: false },
+    Event { name: Some(4), position: 5, length: 10, finish: false },
+    Event { name: Some(4), position: 7, length: 10, finish: false },
+    Event { name: Some(4), position: 7, length: 10, finish: true },
+  ];
+  for e in events {
+    multi_bar.on_event(e);
+    std::thread::sleep(Duration::from_millis(200))
+  }
+
 }

@@ -360,7 +360,7 @@ pub struct Formula {
 
 #[test]
 fn test_formula() {
-  crate::tests::init_logger();
+  crate::tests::init_logger(None);
   // TODO: enable brotli?
   let filename = "formula.json";
   let formulas = crate::io::read::read_formulas(filename).unwrap();

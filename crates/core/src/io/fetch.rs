@@ -107,7 +107,7 @@ pub async fn download_db<U: IntoUrl, P: AsRef<Path>>(url: U, path: P, tracker: i
 
 #[tokio::test]
 async fn test_download_db() {
-  let active_pb = crate::tests::init_logger();
+  let active_pb = crate::tests::init_logger(None);
 
   let url = std::env::var("TEST_DOWNLOAD_URL").unwrap_or("https://example.com".to_string());
   // let url = "https://formulae.brew.sh/api/formula.json".to_string();

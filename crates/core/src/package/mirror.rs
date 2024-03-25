@@ -56,7 +56,7 @@ impl MirrorServer {
 
 #[test]
 fn test_mirror() {
-  crate::tests::init_logger();
+  crate::tests::init_logger(None);
 
   let mirror = MirrorServer {
     server_type: MirrorType::Ghcr,

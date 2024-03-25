@@ -43,7 +43,7 @@ pub async fn exec<'a, I: IntoIterator<Item = &'a PackageOffline> + Clone>(mirror
 
 #[tokio::test]
 async fn test_probe() {
-  let active_pb = crate::tests::init_logger();
+  let active_pb = crate::tests::init_logger(None);
   let mirror = MirrorServer::ghcr();
   let arch = "arm64_sonoma".to_string();
   let query = ["llvm"];
