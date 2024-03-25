@@ -1,4 +1,4 @@
-use super::package::{PkgBuild, PackageOffline};
+use super::package::PkgBuild;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub enum MirrorType {
@@ -33,10 +33,10 @@ impl MirrorServer {
     }
   }
 
-  pub fn package_url(&self, info: &PackageOffline, arch: &PkgBuild) -> String {
+  pub fn package_url(&self, build: &PkgBuild) -> String {
     match self.server_type {
-      MirrorType::Oci | MirrorType::Ghcr => format!("{}/{}/blobs/sha256:{}", self.base_url, info.name.replace("@", "/").replace("+", "x"), arch.sha256),
-      MirrorType::Bottle => format!("{}/{}", self.base_url, arch.filename),
+      MirrorType::Oci | MirrorType::Ghcr => format!("{}/{}/blobs/sha256:{}", self.base_url, build.name.replace("@", "/").replace("+", "x"), build.sha256),
+      MirrorType::Bottle => format!("{}/{}", self.base_url, build.filename),
     }
   }
 
@@ -67,10 +67,11 @@ fn test_mirror() {
   crate::tests::init_logger(None);
 
   let mirror = MirrorServer::ghcr();
-  let packages = crate::io::read::read_formulas(crate::tests::FORMULA_FILE).unwrap().into_iter().map(PackageOffline::from).collect::<Vec<_>>();
+  let packages = crate::io::read::read_formulas(crate::tests::FORMULA_FILE).unwrap()
+    .into_iter().map(crate::package::package::PackageOffline::from).collect::<Vec<_>>();
   for package in &packages {
-    for arch in &package.tar {
-      let url = mirror.package_url(&package, &arch);
+    for arch in &package.prebuilds {
+      let url = mirror.package_url(&arch);
       assert_eq!(url, arch.url);
     }
   }

@@ -68,7 +68,7 @@ impl Error {
     Self::PackageNotFound { name: package.to_string(), arch: None, avaliable: vec![] }
   }
   pub fn package_arch_not_found(package: &PackageOffline, arch: &str) -> Self {
-    Self::PackageNotFound { name: package.name.clone(), arch: Some(arch.to_string()), avaliable: package.tar.iter().map(|i| i.arch.clone()).collect() }
+    Self::PackageNotFound { name: package.name.clone(), arch: Some(arch.to_string()), avaliable: package.prebuilds.iter().map(|i| i.arch.clone()).collect() }
   }
   pub fn parse_response<'a, E: Into<anyhow::Error>>(action: &'static str, url: &'a str, reason: &'a str) -> impl FnOnce(E) -> Self + 'a {
     move |e: E| Self::ResponseMalformed { action, url: url.to_string(), reason: reason.to_string(), inner: e.into() }

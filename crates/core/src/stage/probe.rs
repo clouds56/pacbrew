@@ -6,17 +6,17 @@ use crate::{error::{Error, ErrorExt, Result}, package::{mirror::MirrorServer, pa
 
 use super::Event;
 
-#[tracing::instrument(level = "trace", skip_all, fields(mirror = mirror.base_url, package = %info.name, arch = %pkg.arch))]
-pub async fn step(mirror: &MirrorServer, info: &PackageOffline, pkg: &PkgBuild) -> Result<PackageUrl> {
+#[tracing::instrument(level = "trace", skip_all, fields(mirror = mirror.base_url, package = %pkg.name, arch = %pkg.arch))]
+pub async fn step(mirror: &MirrorServer, pkg: &PkgBuild) -> Result<PackageUrl> {
   info!(?pkg);
-  let url = mirror.package_url(info, pkg);
+  let url = mirror.package_url(pkg);
   let resp = mirror.client().head(&url).send().await.when(("head", &url))?;
   let size = resp.headers()
     .get(header::CONTENT_LENGTH).ok_or_else(|| Error::parse_response_error("head", &url, "CONTENT_LENGTH"))?
     .to_str().map_err(Error::parse_response("head", &url, "CONTENT_LENGTH.to_str"))?
     .parse::<u64>().map_err(Error::parse_response("head", &url, "CONTENT_LENGTH.parse"))?;
   Ok(PackageUrl {
-    name: info.name.clone(),
+    name: pkg.name.clone(),
     pkg_url: url.to_string(),
     pkg_size: size,
   })
@@ -44,7 +44,7 @@ pub async fn exec<'a, P: AsRef<Path>, I: IntoIterator<Item = &'a PackageOffline>
         pkg_size: target.metadata().when(("metadata", &target))?.len(),
       }
     } else {
-      step(mirror, info, pkg).await?
+      step(mirror, pkg).await?
     };
     result.push(Value {
       pkg: pkg.clone(),

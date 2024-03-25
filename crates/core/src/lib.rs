@@ -6,11 +6,7 @@ pub mod ui;
 
 pub mod package;
 pub mod stage;
-pub mod io {
-  pub mod http;
-  pub mod read;
-  pub mod remote;
-}
+pub mod io;
 
 #[cfg(test)]
 mod tests {
