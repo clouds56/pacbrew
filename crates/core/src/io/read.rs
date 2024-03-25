@@ -19,6 +19,13 @@ pub fn read_json<T: DeserializeOwned, P: AsRef<Path>>(path: P) -> Result<T> {
   Ok(serde_json::from_str(&s).when(("de", std::any::type_name::<T>(), Some(&s)))?)
 }
 
+pub fn read_toml<T: DeserializeOwned, P: AsRef<Path>>(path: P) -> Result<T> {
+  let path = path.as_ref();
+  let s = std::fs::read_to_string(path).when(("read", path))?;
+  Ok(toml::from_str(&s).when(("de", std::any::type_name::<T>(), Some(&s)))?)
+}
+
+
 pub fn read_formulas<P: AsRef<Path>>(path: P) -> Result<Vec<crate::package::formula::Formula>> {
   read_json(path)
 }

@@ -6,6 +6,7 @@
 crates/**/*.tmp
 crates/**/formula.json
 crates/**/cache
+crates/**/pacbrew.toml
 
 /cache/*
 !/cache/pactree.conf

@@ -1,6 +1,6 @@
 use super::package::{PkgBuild, PackageOffline};
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub enum MirrorType {
   Ghcr, Oci, Bottle,
 }
@@ -8,6 +8,7 @@ pub enum MirrorType {
 pub struct MirrorServer {
   pub server_type: MirrorType,
   pub base_url: String,
+  pub api_url: Option<String>,
 }
 
 impl MirrorServer {
@@ -15,19 +16,19 @@ impl MirrorServer {
     if server_type == MirrorType::Ghcr {
       warn!("should not use ghcr with custom base_url, please use MirrorServer::ghcr() instead");
     }
-    Self { server_type, base_url: base_url.to_string() }
+    Self { server_type, base_url: base_url.to_string(), api_url: None }
   }
   pub fn ghcr() -> Self {
     Self {
       server_type: MirrorType::Ghcr,
+      api_url: Some("https://formulae.brew.sh/api/formula.json".to_string()),
       base_url: "https://ghcr.io/v2/homebrew/core".to_string(),
     }
   }
 
   pub fn api_formula(&self) -> Option<String> {
     match self.server_type {
-      MirrorType::Ghcr => Some("https://formulae.brew.sh/api/formula.json".to_string()),
-      MirrorType::Oci => None,
+      MirrorType::Ghcr | MirrorType::Oci => self.api_url.clone(),
       MirrorType::Bottle => Some(format!("{}/api/formula.json", self.base_url)),
     }
   }
@@ -65,10 +66,7 @@ impl MirrorServer {
 fn test_mirror() {
   crate::tests::init_logger(None);
 
-  let mirror = MirrorServer {
-    server_type: MirrorType::Ghcr,
-    base_url: "https://ghcr.io/v2/homebrew/core".to_string(),
-  };
+  let mirror = MirrorServer::ghcr();
   let packages = crate::io::read::read_formulas(crate::tests::FORMULA_FILE).unwrap().into_iter().map(PackageOffline::from).collect::<Vec<_>>();
   for package in &packages {
     for arch in &package.tar {

@@ -128,8 +128,8 @@ impl<'a, T> ErrorExt<'a, T, toml::ser::Error> for StdResult<T, toml::ser::Error>
 }
 
 impl<'a, T> ErrorExt<'a, T, toml::de::Error> for StdResult<T, toml::de::Error> {
-  type Ctx = (&'static str, &'a str);
-  fn when(self, (action, expect_type): Self::Ctx) -> Result<T, Error> {
+  type Ctx = (&'static str, &'a str, Option<&'a str>);
+  fn when(self, (action, expect_type, _): Self::Ctx) -> Result<T, Error> {
     if action != "de" { warn!(message="should be de", action) }
     self.map_err(|error| Error::SerdeTomlDe { expect_type: expect_type.to_string(), error })
   }
