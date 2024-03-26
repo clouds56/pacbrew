@@ -1,14 +1,14 @@
 use std::path::Path;
 
-use crate::{error::{Error, ErrorExt as _, Result}, io::{fetch::{fetch_remote, FetchReq, MirrorLists}, read::{read_formulas, tmp_path}, FetchState}, ui::EventListener};
+use crate::{error::{Error, ErrorExt as _, Result}, io::{fetch::{fetch_remote, FetchReq, MirrorLists}, read::{read_formulas, tmp_path}, FetchState}, ui::{event::BytesEvent, EventListener}};
 
 #[tracing::instrument(level = "debug", skip_all, fields(mirrors.len = mirrors.len()))]
-pub async fn exec<P: AsRef<Path>>(mirrors: &MirrorLists, dest_dir: P, tracker: impl EventListener<FetchState>) -> Result<()> {
+pub async fn exec<P: AsRef<Path>>(mirrors: &MirrorLists, dest_dir: P, tracker: impl EventListener<BytesEvent>) -> Result<()> {
   // TODO: support formula.json.gz
   let req = FetchReq::Api("formula.json".to_string());
   let target = req.target(dest_dir);
   let tmp_file = tmp_path(&target, ".new");
-  fetch_remote(mirrors, req, &tmp_file, tracker).await?;
+  fetch_remote(mirrors, req, &tmp_file, |state: FetchState| tracker.on_event(BytesEvent::Progress { current: state.current, max: Some(state.max) })).await?;
   if !tmp_file.exists() {
     return Err(Error::parse_response_error("fetch", &tmp_file.display().to_string(), "not exists"));
   }

@@ -2,9 +2,7 @@ use std::path::Path;
 
 use reqwest::header;
 
-use crate::{error::{Error, ErrorExt, Result}, io::fetch::{FetchReq, MirrorLists}, package::package::{PackageVersion, PackageUrl, PkgBuild}, ui::EventListener};
-
-use super::Event;
+use crate::{error::{Error, ErrorExt, Result}, io::fetch::{FetchReq, MirrorLists}, package::package::{PackageUrl, PackageVersion, PkgBuild}, ui::{event::ItemEvent, EventListener}};
 
 #[tracing::instrument(level = "trace", skip_all, fields(mirrors.len = mirrors.len(), package = %pkg.name, arch = %pkg.arch))]
 pub async fn step(mirrors: &MirrorLists, pkg: &PkgBuild) -> Result<PackageUrl> {
@@ -44,7 +42,7 @@ pub async fn exec<'a, P, I>(
   mirrors: &MirrorLists,
   arch: &str,
   packages: I,
-  tracker: impl EventListener<Event>
+  tracker: impl EventListener<ItemEvent>
 ) -> Result<Vec<Value>>
 where
   P: AsRef<Path>,
@@ -55,7 +53,8 @@ where
     package.find_arch(arch).ok_or_else(|| Error::package_arch_not_found(package, &arch))
   }).collect::<Result<Vec<_>, _>>()?;
   for (i, (info, pkg)) in packages.into_iter().zip(urls).enumerate() {
-    tracker.on_event(Event { name: info.name.clone(), current: i, max: None });
+    tracker.on_event(ItemEvent::Progress { current: i, max: None });
+    tracker.on_event(ItemEvent::Message { name: format!("probing {}", info.name) });
     // TODO: check part?
     let target = cache_dir.as_ref().join(&pkg.filename);
     let url = if target.exists() {
@@ -72,6 +71,8 @@ where
       url,
     })
   }
+  tracker.on_event(ItemEvent::Message { name: format!("probe finished") });
+  tracker.on_event(ItemEvent::Finish);
   Ok(result)
 }
 
@@ -85,7 +86,7 @@ async fn test_probe() {
   let query = ["llvm"];
   let formulas = crate::io::read::read_formulas(crate::tests::FORMULA_FILE).unwrap();
   let resolved = super::resolve::exec(&formulas, query, ()).await.unwrap().packages;
-  let result = crate::ui::with_progess_bar(active_pb, None, Some(Event::new(resolved.len())), |tracker| async {
+  let result = crate::ui::with_progess_bar(active_pb, None, Some(ItemEvent::Init { max: resolved.len() }), |tracker| async {
     exec(cache_path, &mirrors, arch, &resolved, tracker).await
   }, ()).await.unwrap();
   info!(len=result.len(), sum=result.iter().map(|i| i.url.pkg_size).sum::<u64>());

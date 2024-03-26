@@ -3,7 +3,7 @@ use std::path::Path;
 use sha2::{Digest, Sha256};
 use tokio::io::AsyncReadExt;
 
-use crate::{error::{ErrorExt, Result}, package::package::{PackageCache, PackageUrl, PkgBuild}, ui::EventListener};
+use crate::{error::{ErrorExt, Result}, package::package::{PackageCache, PackageUrl, PkgBuild}, ui::{event::{BytesEvent, DetailEvent, ItemEvent}, EventListener}};
 
 pub struct Failed {
   pub name: String,
@@ -11,7 +11,7 @@ pub struct Failed {
 }
 
 #[tracing::instrument(level = "trace", skip_all, fields(cache_path = %cache_path.as_ref().display()))]
-pub async fn step<P: AsRef<Path>>(cache_path: P, tracker: impl EventListener<usize>) -> Result<String> {
+pub async fn step<P: AsRef<Path>>(cache_path: P, tracker: impl EventListener<u64>) -> Result<String> {
   let mut file = tokio::fs::File::open(cache_path.as_ref()).await.when(("open", cache_path.as_ref()))?;
   let mut hasher = Sha256::new();
   let mut buf = vec![0; 8*1024*1024];
@@ -22,7 +22,7 @@ pub async fn step<P: AsRef<Path>>(cache_path: P, tracker: impl EventListener<usi
       break;
     }
     hasher.update(&buf[..size]);
-    total_size += size;
+    total_size += size as u64;
     tracker.on_event(total_size);
   }
   let hash = format!("{:x}", hasher.finalize());
@@ -31,9 +31,9 @@ pub async fn step<P: AsRef<Path>>(cache_path: P, tracker: impl EventListener<usi
 }
 
 #[tracing::instrument(level = "debug", skip_all)]
-pub async fn exec<'a, I: IntoIterator<Item = (&'a PkgBuild, &'a PackageUrl, &'a PackageCache)>>(pkg: I) -> Result<Vec<Failed>> {
+pub async fn exec<'a, I: IntoIterator<Item = (&'a PkgBuild, &'a PackageUrl, &'a PackageCache)>>(pkg: I, tracker: impl EventListener<DetailEvent<usize, u64>>) -> Result<Vec<Failed>> {
   let mut result = Vec::new();
-  for (pkg, url, cached) in pkg.into_iter() {
+  for (i, (pkg, url, cached)) in pkg.into_iter().enumerate() {
     let mut reason = None;
     if pkg.name != url.name || pkg.name != cached.name {
       reason = Some("name not match");
@@ -46,7 +46,10 @@ pub async fn exec<'a, I: IntoIterator<Item = (&'a PkgBuild, &'a PackageUrl, &'a 
       warn!(pkg.name, cached.cache_pkg=%cached.cache_pkg.display(), "not exists");
     }
 
-    let hash = step(&cached.cache_pkg, ()).await?;
+    tracker.on_event(DetailEvent::Item(i, BytesEvent::Init { max: cached.cache_size }));
+    let hash = step(&cached.cache_pkg, |pos| tracker.on_event(DetailEvent::Item(i, BytesEvent::Progress { current: pos, max: None }))).await?;
+    tracker.on_event(DetailEvent::Item(i, BytesEvent::Finish));
+
     if hash != pkg.sha256 {
       reason = Some("hash not match");
       warn!(pkg.name, hash, pkg.sha256, "hash not match");
@@ -58,14 +61,19 @@ pub async fn exec<'a, I: IntoIterator<Item = (&'a PkgBuild, &'a PackageUrl, &'a 
         reason: reason.to_string(),
       });
     }
+    tracker.on_event(DetailEvent::Overall(ItemEvent::Progress { current: i, max: None }));
+    tracker.on_event(DetailEvent::Overall(ItemEvent::Message { name: format!("verfying {}", pkg.filename) }));
   }
+  tracker.on_event(DetailEvent::Overall(ItemEvent::Message { name: "verify finished".to_string() }));
+  tracker.on_event(DetailEvent::Overall(ItemEvent::Finish));
+
   Ok(vec![])
 }
 
 #[tokio::test]
 async fn test_verify() {
   use crate::tests::*;
-  let active_pb = init_logger(None);
+  let _active_pb = init_logger(None);
 
   let packages = get_formulas().into_iter()
     .map(crate::package::package::PackageVersion::from).collect::<Vec<_>>();
@@ -97,6 +105,6 @@ async fn test_verify() {
     pkgs.push((pkg, url, cache));
   }
   let iter = pkgs.iter().map(|i| (i.0, &i.1, &i.2));
-  let result = exec(iter).await.unwrap();
+  let result = exec(iter, ()).await.unwrap();
   assert!(result.is_empty());
 }

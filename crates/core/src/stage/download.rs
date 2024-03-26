@@ -2,7 +2,7 @@ use std::path::{Path, PathBuf};
 
 use indicatif::ProgressStyle;
 
-use crate::{error::{ErrorExt as _, Result}, io::{fetch::{fetch_remote, FetchReq, MirrorLists}, FetchState}, package::package::{PackageCache, PackageUrl, PkgBuild}, ui::{bar::{FeedBar, FeedMulti}, EventListener}};
+use crate::{error::{ErrorExt as _, Result}, io::{fetch::{fetch_remote, FetchReq, MirrorLists}, FetchState}, package::package::{PackageCache, PackageUrl, PkgBuild}, ui::{bar::{FeedBar, FeedMulti}, event::{BytesEvent, DetailEvent}, EventListener}};
 
 #[derive(Clone, Debug)]
 pub struct Event {
@@ -59,7 +59,7 @@ pub async fn step<P: AsRef<Path>>(mirrors: &MirrorLists, pkg: &PkgBuild, cache_p
 }
 
 #[tracing::instrument(level = "debug", skip_all, fields(cache_path = %cache_path.as_ref().display(), mirrors.len = mirrors.lists.len()))]
-pub async fn exec<'a, P: AsRef<Path>, I: IntoIterator<Item = (&'a PkgBuild, &'a PackageUrl)>>(mirrors: &MirrorLists, pkgs: I, cache_path: P, tracker: impl EventListener<Event>) -> Result<Vec<PackageCache>> {
+pub async fn exec<'a, P: AsRef<Path>, I: IntoIterator<Item = (&'a PkgBuild, &'a PackageUrl)>>(mirrors: &MirrorLists, pkgs: I, cache_path: P, tracker: impl EventListener<DetailEvent<u64, u64>>) -> Result<Vec<PackageCache>> {
   let mut result = Vec::new();
   let pkgs = pkgs.into_iter().collect::<Vec<_>>();
   let mut total_size = 0;
@@ -67,16 +67,17 @@ pub async fn exec<'a, P: AsRef<Path>, I: IntoIterator<Item = (&'a PkgBuild, &'a 
   for &(_, url) in &pkgs {
     total_size += url.pkg_size;
   }
-  tracker.on_event(Event::overall_setup("now", total_size));
+  tracker.on_event(DetailEvent::Overall(BytesEvent::Init { max: total_size }));
   for (i, (pkg, url)) in pkgs.into_iter().enumerate() {
-    tracker.on_event(Event::overall_setup(&format!("now [{}] {}", i, pkg.name), total_size));
-    tracker.on_event(Event::task(&pkg.filename, 0, Some(url.pkg_size)));
+    tracker.on_event(DetailEvent::Overall(BytesEvent::Message { name: format!("now [{}] {}", i, pkg.name) }));
+    tracker.on_event(DetailEvent::Item(i, BytesEvent::Init { max: url.pkg_size }));
+    tracker.on_event(DetailEvent::Item(i, BytesEvent::Message { name: pkg.filename.clone() }));
     let value = step(mirrors, pkg, &cache_path, |e: FetchState| {
-      tracker.on_event(Event::task(&pkg.filename, e.current, Some(e.max)));
-      tracker.on_event(Event::overall_progress(downloaded_size + e.current, None));
+      tracker.on_event(DetailEvent::Item(i, BytesEvent::Progress { current: e.current, max: Some(e.max) }));
+      tracker.on_event(DetailEvent::Overall(BytesEvent::Progress { current: downloaded_size + e.current, max: None }));
     }).await?;
     downloaded_size += url.pkg_size;
-    tracker.on_event(Event::finish(Some(&pkg.filename)));
+    tracker.on_event(DetailEvent::Item(i, BytesEvent::Finish));
     let cache_size = std::fs::metadata(&value).when(("metadata", &value))?.len();
     if cache_size != url.pkg_size {
       warn!(cache_size, url.pkg_size, "size not match");
@@ -87,7 +88,7 @@ pub async fn exec<'a, P: AsRef<Path>, I: IntoIterator<Item = (&'a PkgBuild, &'a 
       cache_size,
     })
   }
-  tracker.on_event(Event::finish(None));
+  tracker.on_event(DetailEvent::Overall(BytesEvent::Finish));
   Ok(result)
 }
 

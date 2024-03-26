@@ -1,5 +1,6 @@
 pub mod bar;
 pub mod tracker;
+pub mod event;
 
 pub use bar::{with_progess_bar, with_progess_multibar};
 

@@ -3,7 +3,7 @@ use std::{borrow::Borrow, collections::{HashMap, HashSet, VecDeque}, time::Durat
 ///! query would find in Vec<Formula> to get correspond Package
 ///! with there dependences.
 
-use crate::{error::Result, package::{formula::Formula, package::PackageVersion}, stage::Event, ui::EventListener};
+use crate::{error::Result, package::{formula::Formula, package::PackageVersion}, ui::{event::ItemEvent, EventListener}};
 
 pub struct Value {
   pub names: Vec<String>,
@@ -14,7 +14,7 @@ pub struct Value {
 pub async fn exec<'a, S, I>(
   formulas: &[Formula],
   query: I,
-  tracker: impl EventListener<Event>
+  tracker: impl EventListener<ItemEvent>
 ) -> Result<Value>
 where
   S: Borrow<str> + ?Sized + 'a,
@@ -33,7 +33,8 @@ where
   let mut i = 0;
   while let Some(item) = queue.pop_front() {
     i += 1;
-    tracker.on_event(Event { name: item.to_string(), current: i, max: Some(i + queue.len()) } );
+    tracker.on_event(ItemEvent::Progress { current: i, max: Some(i + queue.len()) });
+    tracker.on_event(ItemEvent::Message { name: format!("resolving {}", item) });
     let formula = *formula_index.get(item).ok_or_else(|| crate::error::Error::package_not_found(item))?;
     if direct_names.contains_key(item) {
       direct_names.insert(item, &formula.full_name);
@@ -52,6 +53,8 @@ where
     // TODO: better parking method
     tokio::time::sleep(Duration::from_millis(0)).await;
   }
+  tracker.on_event(ItemEvent::Message { name: format!("resolve finished") });
+  tracker.on_event(ItemEvent::Finish);
   let mut direct_names = direct_names.values().map(|i| i.to_string()).collect::<Vec<_>>();
   direct_names.sort();
   // TODO: convert formula to package
@@ -68,7 +71,7 @@ async fn test_resolve() {
   let query = ["wget", "llvm", "python", "ffmpeg"];
   let formulas = get_formulas();
 
-  let init = Event { name: String::new(), current: 0, max: Some(query.len()) };
+  let init = ItemEvent::Init { max: query.len() };
   let result = crate::ui::with_progess_bar(active_pb.clone(), None, Some(init), |tracker| async move {
     exec(&formulas, query, tracker).await
   }, ()).await.unwrap();
