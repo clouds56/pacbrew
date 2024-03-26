@@ -5,7 +5,7 @@ use crate::{command::PbStyle, config::Config, ACTIVE_PB};
 
 use super::QueryArgs;
 
-#[tracing::instrument(level = "info", skip_all, fields(formula = %config.base.formula_json().display(), query = ?query.names, arch = %config.base.arch))]
+#[tracing::instrument(level = "debug", skip_all, fields(query = ?query.names, arch = %config.base.arch))]
 pub async fn run(config: &Config, mirrors: &MirrorLists, query: QueryArgs) -> Result<()> {
   let formulas = read_formulas(config.base.formula_json())?;
 
@@ -14,7 +14,11 @@ pub async fn run(config: &Config, mirrors: &MirrorLists, query: QueryArgs) -> Re
     ACTIVE_PB.clone(),
     Some(PbStyle::Items.style()),
     Some(ItemEvent::Init { max: query.names.len() }),
-    |tracker| resolve::exec(&formulas, query.names.iter(), tracker),
+    |tracker| resolve::exec(
+      &formulas,
+      query.names.iter(),
+      tracker
+    ),
     ()
   ).await.unwrap();
 
@@ -23,15 +27,25 @@ pub async fn run(config: &Config, mirrors: &MirrorLists, query: QueryArgs) -> Re
     ACTIVE_PB.clone(),
     Some(PbStyle::Items.style()),
     Some(ItemEvent::Init { max: resolved.packages.len() }),
-    |tracker| probe::exec(&config.base.cache, mirrors, &config.base.arch, &resolved.packages, tracker),
+    |tracker| probe::exec(
+      probe::Args::new(&config.base.arch, mirrors)
+        .cache(&config.base.cache, false),
+      &resolved.packages,
+      tracker
+    ),
     (),
   ).await.unwrap();
 
-  info!(message="probe", urls.len=urls.len(), pkgs=urls.iter().map(|i| i.pkg.filename.as_str()).collect::<Vec<_>>().join(","));
+  info!(message="download", urls.len=urls.len(), pkgs=urls.iter().map(|i| i.pkg.filename.as_str()).collect::<Vec<_>>().join(","));
   let cached = with_progess_multibar(
     ACTIVE_PB.clone(),
     Some(PbStyle::Bytes.style()),
-    |tracker| download::exec(mirrors, urls.iter().map(|i| (&i.pkg, &i.url)), &config.base.cache, tracker),
+    |tracker| download::exec(
+      mirrors,
+      &config.base.cache,
+      urls.iter().filter(|v| !v.cached).map(|i| (&i.pkg, &i.url)),
+      tracker
+    ),
     (),
   ).await.unwrap();
   cached.iter().for_each(|i| info!(message="download", name=%i.name, size=%i.cache_size, path=%i.cache_pkg.display()));
@@ -41,7 +55,11 @@ pub async fn run(config: &Config, mirrors: &MirrorLists, query: QueryArgs) -> Re
     ACTIVE_PB.clone(),
     Some(PbStyle::Items.style()),
     Some(ItemEvent::Init { max: cached.len() }),
-    |tracker| verify::exec(cached.iter().zip(&urls).map(|(a, b)| (&b.pkg, &b.url, a)), simplify_tracker(tracker)),
+    |tracker| verify::exec(
+      &config.base.cache,
+      urls.iter().map(|a| (&a.pkg, &a.url, None)),
+      simplify_tracker(tracker)
+    ),
     ()
   ).await.unwrap();
 

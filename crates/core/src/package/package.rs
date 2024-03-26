@@ -106,7 +106,7 @@ pub struct PackageUrl {
   pub pkg_size: u64,
 }
 
-#[derive(Debug, serde::Serialize, serde::Deserialize)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct PackageCache {
   pub name: String,
   pub cache_pkg: PathBuf,

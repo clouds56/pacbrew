@@ -59,7 +59,12 @@ pub async fn step<P: AsRef<Path>>(mirrors: &MirrorLists, pkg: &PkgBuild, cache_p
 }
 
 #[tracing::instrument(level = "debug", skip_all, fields(cache_path = %cache_path.as_ref().display(), mirrors.len = mirrors.lists.len()))]
-pub async fn exec<'a, P: AsRef<Path>, I: IntoIterator<Item = (&'a PkgBuild, &'a PackageUrl)>>(mirrors: &MirrorLists, pkgs: I, cache_path: P, tracker: impl EventListener<DetailEvent<u64, u64>>) -> Result<Vec<PackageCache>> {
+pub async fn exec<'a, P: AsRef<Path>, I: IntoIterator<Item = (&'a PkgBuild, &'a PackageUrl)>>(
+  mirrors: &MirrorLists,
+  cache_path: P,
+  pkgs: I,
+  tracker: impl EventListener<DetailEvent<u64, u64>>
+) -> Result<Vec<PackageCache>> {
   let mut result = Vec::new();
   let pkgs = pkgs.into_iter().collect::<Vec<_>>();
   let mut total_size = 0;
@@ -95,19 +100,19 @@ pub async fn exec<'a, P: AsRef<Path>, I: IntoIterator<Item = (&'a PkgBuild, &'a 
 #[tokio::test]
 pub async fn test_download() {
   use crate::tests::*;
-  let cache_path = CACHE_PATH;
+  let cache_dir = CACHE_PATH;
   let arch = ARCH;
-  std::fs::create_dir_all(cache_path).ok();
+  std::fs::create_dir_all(cache_dir).ok();
   let active_pb = crate::tests::init_logger(Some("warn"));
   let mirrors = get_mirrors();
   let query = ["wget"];
   let formulas = crate::io::read::read_formulas(crate::tests::FORMULA_FILE).unwrap();
   let resolved = super::resolve::exec(&formulas, query, ()).await.unwrap().packages;
-  let urls = super::probe::exec(cache_path, &mirrors, arch, &resolved, ()).await.unwrap();
+  let urls = super::probe::exec(super::probe::Args::new(arch, &mirrors).cache(&cache_dir, false), &resolved, ()).await.unwrap();
   warn!("start downloading");
   let result = crate::ui::with_progess_multibar(active_pb, None, |tracker| async {
     let tmp = urls.iter().map(|i| (&i.pkg, &i.url)).collect::<Vec<_>>();
-    exec(&mirrors, tmp, cache_path, tracker).await
+    exec(&mirrors, cache_dir, tmp, tracker).await
   }, ()).await.unwrap();
   info!(len=result.len());
   assert_eq!(result.len(), resolved.len());

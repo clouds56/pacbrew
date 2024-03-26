@@ -4,7 +4,7 @@ use core_lib::{io::fetch::MirrorLists, stage::update_db, ui::with_progess_bar};
 use crate::{command::PbStyle, config::Config, ACTIVE_PB};
 
 
-#[tracing::instrument(level = "info", skip_all)]
+#[tracing::instrument(level = "debug", skip_all, fields(mirrors.len=mirrors.len()))]
 pub async fn run(config: &Config, mirrors: &MirrorLists) -> Result<()> {
   with_progess_bar(
     ACTIVE_PB.clone(),

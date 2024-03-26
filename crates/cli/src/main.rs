@@ -31,6 +31,7 @@ async fn main() {
   let _ = tracing_subscriber::fmt()
     .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
     .with_span_events(FmtSpan::NEW | FmtSpan::CLOSE)
+    .compact()
     .with_writer(move || PbWriter::new(ACTIVE_PB.read().unwrap().clone(), std::io::stderr()))
     .init();
   let root = std::env::var("CARGO_MANIFEST_DIR").unwrap();

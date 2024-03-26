@@ -1,3 +1,3 @@
 [workspace]
-members = [ "crates/cli", "crates/core"]
+members = [ "crates/cli", "crates/core", "crates/*.tmp"  ]
 resolver = "2"

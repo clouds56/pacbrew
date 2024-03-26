@@ -31,9 +31,24 @@ pub async fn step<P: AsRef<Path>>(cache_path: P, tracker: impl EventListener<u64
 }
 
 #[tracing::instrument(level = "debug", skip_all)]
-pub async fn exec<'a, I: IntoIterator<Item = (&'a PkgBuild, &'a PackageUrl, &'a PackageCache)>>(pkg: I, tracker: impl EventListener<DetailEvent<usize, u64>>) -> Result<Vec<Failed>> {
+pub async fn exec<'a, P: AsRef<Path>, I: IntoIterator<Item = (&'a PkgBuild, &'a PackageUrl, Option<&'a PackageCache>)>>(
+  cache_path: P,
+  pkg: I,
+  tracker: impl EventListener<DetailEvent<usize, u64>>
+) -> Result<Vec<Failed>> {
   let mut result = Vec::new();
   for (i, (pkg, url, cached)) in pkg.into_iter().enumerate() {
+    let cached = cached.cloned().unwrap_or_else(|| {
+      let cache_pkg = cache_path.as_ref().join(&pkg.filename);
+      let cache_size = if cache_pkg.exists() && cache_pkg.is_file() {
+        cache_pkg.metadata().ok().map(|i| i.len()).unwrap_or_default()
+      } else { 0 };
+      PackageCache {
+        name: pkg.name.clone(),
+        cache_pkg,
+        cache_size,
+      }
+    });
     let mut reason = None;
     if pkg.name != url.name || pkg.name != cached.name {
       reason = Some("name not match");
@@ -104,7 +119,10 @@ async fn test_verify() {
     };
     pkgs.push((pkg, url, cache));
   }
-  let iter = pkgs.iter().map(|i| (i.0, &i.1, &i.2));
-  let result = exec(iter, ()).await.unwrap();
+  let iter = pkgs.iter().map(|i| (i.0, &i.1, Some(&i.2)));
+  let result = exec("", iter, ()).await.unwrap();
+  assert!(result.is_empty());
+  let iter = pkgs.iter().map(|i| (i.0, &i.1, None));
+  let result = exec(CACHE_PATH, iter, ()).await.unwrap();
   assert!(result.is_empty());
 }
