@@ -7,6 +7,8 @@ edition = "2021"
 
 [dependencies]
 anyhow = { version = "1.0.81", features = ["backtrace"] }
+async-compression = { version = "0.4.6", features = ["flate2", "tokio", "gzip"] }
+flate2 = "1.0.28"
 futures = "0.3.30"
 indicatif = "0.17.8"
 reqwest = { version = "0.12.2", features = ["stream"] }
@@ -14,8 +16,11 @@ serde = { version = "1.0.197", features = ["derive"] }
 serde_json = "1.0.114"
 serde_with = { version = "3.7.0", features = ["chrono"] }
 sha2 = "0.10.8"
+tar = "0.4.40"
 thiserror = "1.0.58"
 tokio = { version = "1.36.0", features = ["full"] }
+tokio-tar = "0.3.1"
+tokio-util = "0.7.10"
 toml = "0.8.12"
 tracing = "0.1.40"
 url = "2.5.0"
