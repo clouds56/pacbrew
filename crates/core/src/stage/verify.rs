@@ -85,15 +85,10 @@ pub async fn exec<'a, P: AsRef<Path>, I: IntoIterator<Item = (&'a PkgBuild, &'a 
   Ok(vec![])
 }
 
-#[tokio::test]
-async fn test_verify() {
-  use crate::tests::*;
-  let _active_pb = init_logger(None);
-
-  let packages = get_formulas().into_iter()
-    .map(crate::package::package::PackageVersion::from).collect::<Vec<_>>();
+#[cfg(test)]
+pub fn get_pkgs<'a>(packages: &'a [crate::package::package::PackageVersion], cache_path: &str) -> Vec<(&'a PkgBuild, PackageUrl, PackageCache)> {
   let mut pkgs = Vec::new();
-  for entry in std::fs::read_dir(CACHE_PATH).unwrap() {
+  for entry in std::fs::read_dir(cache_path).unwrap() {
     let entry = entry.unwrap();
     if !entry.file_type().unwrap().is_file() {
       continue;
@@ -119,6 +114,19 @@ async fn test_verify() {
     };
     pkgs.push((pkg, url, cache));
   }
+  return pkgs
+}
+
+
+#[tokio::test]
+async fn test_verify() {
+  use crate::tests::*;
+  let _active_pb = init_logger(None);
+
+  let packages = get_formulas().into_iter()
+    .map(crate::package::package::PackageVersion::from).collect::<Vec<_>>();
+  let pkgs = get_pkgs(&packages, CACHE_PATH);
+
   let iter = pkgs.iter().map(|i| (i.0, &i.1, Some(&i.2)));
   let result = exec("", iter, ()).await.unwrap();
   assert!(result.is_empty());
