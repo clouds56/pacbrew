@@ -2,6 +2,7 @@ use indicatif::ProgressStyle;
 
 pub mod update;
 pub mod download;
+pub mod install;
 
 #[derive(Debug, Clone, clap::Args)]
 pub struct QueryArgs {

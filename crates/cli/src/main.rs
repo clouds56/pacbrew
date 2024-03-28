@@ -19,6 +19,7 @@ pub struct Args {
 pub enum Command {
   Update,
   Download(command::QueryArgs),
+  Install(command::QueryArgs),
 }
 
 lazy_static::lazy_static! {
@@ -46,5 +47,6 @@ async fn main() {
   match args.command {
     Command::Update => command::update::run(&config, &mirrors).await.unwrap(),
     Command::Download(query) => command::download::run(&config, &mirrors, query).await.unwrap(),
+    Command::Install(query) => command::install::run(&config, &mirrors, query).await.unwrap(),
   }
 }

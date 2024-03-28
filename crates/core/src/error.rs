@@ -136,3 +136,29 @@ impl<'a, T> ErrorExt<'a, T, toml::de::Error> for StdResult<T, toml::de::Error> {
     self.map_err(|error| Error::SerdeTomlDe { expect_type: expect_type.to_string(), error })
   }
 }
+
+pub trait IoErrorExt<T, E> {
+  fn ok_not_found(self) -> Result<Option<T>, std::io::Error>;
+  fn ok_not_found_none(self) -> Result<(), std::io::Error>;
+}
+pub trait IoErrorExt2<T, E> {
+  fn ok_not_found_default(self) -> Result<T, std::io::Error>;
+}
+
+impl<T> IoErrorExt<T, std::io::Error> for std::io::Result<T> {
+  fn ok_not_found(self) -> Result<Option<T>, std::io::Error> {
+    match self {
+      Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(None),
+      _ => self.map(Some)
+    }
+  }
+  fn ok_not_found_none(self) -> Result<(), std::io::Error> {
+    self.ok_not_found().map(|_| ())
+  }
+}
+
+impl<T: Default> IoErrorExt2<T, std::io::Error> for std::io::Result<T> {
+  fn ok_not_found_default(self) -> Result<T, std::io::Error> {
+    self.ok_not_found().map(Option::unwrap_or_default)
+  }
+}
