@@ -92,7 +92,7 @@ async fn test_download_db() {
 
   // let url = "https://formulae.brew.sh/api/formula.json".to_string();
   let req = FetchReq::Api("formula.json".to_string());
-  let target = req.target(CACHE_PATH);
+  let target = req.target("cache");
   info!(%req, target=%target.display());
   let mirrors = get_mirrors();
 

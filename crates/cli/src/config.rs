@@ -21,12 +21,15 @@ pub struct Config {
 pub struct BaseConfig {
   pub cache: PathBuf,
   pub prefix: PathBuf,
+  #[serde(alias="cellar")]
+  pub local_opt: Option<PathBuf>,
   pub db: PathBuf,
   pub arch: String,
 }
 
 impl BaseConfig {
   pub fn formula_json(&self) -> PathBuf { self.cache.join("formula.json") }
+  pub fn local_opt(&self) -> PathBuf { self.local_opt.clone().unwrap_or_else(|| self.prefix.join("local").join("opt")) }
 }
 
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]

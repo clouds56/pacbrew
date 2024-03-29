@@ -104,7 +104,7 @@ async fn test_verify() {
   let pkgs = crate::stage::verify::get_pkgs(&packages, CACHE_PATH);
 
   let result = crate::ui::with_progess_multibar(active_pb, None, |tracker| exec(
-    Args::new(&"cache/root",&"cache/root/opt_").force(true),
+    Args::new(&PREFIX_PATH, &CELLAR_PATH).force(true),
     pkgs.iter().map(|i| &i.2),
     tracker
   ), ()).await.unwrap();

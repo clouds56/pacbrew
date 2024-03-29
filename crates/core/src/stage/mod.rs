@@ -4,6 +4,7 @@ pub mod download;
 pub mod update_db;
 pub mod verify;
 pub mod unpack;
+pub mod link;
 
 #[derive(Debug, Clone)]
 pub struct Event {

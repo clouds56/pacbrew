@@ -1,5 +1,5 @@
 use anyhow::Result;
-use core_lib::{io::{fetch::MirrorLists, read::read_formulas}, package::package::PackageCache, stage::{probe, resolve, unpack, verify}, ui::with_progess_multibar};
+use core_lib::{io::{fetch::MirrorLists, read::read_formulas}, package::package::PackageCache, stage::{link, probe, resolve, unpack, verify}, ui::{event::ItemEvent, with_progess_bar, with_progess_multibar}};
 
 use crate::{command::PbStyle, config::Config, ACTIVE_PB};
 
@@ -45,13 +45,13 @@ pub async fn run(config: &Config, mirrors: &MirrorLists, query: QueryArgs) -> Re
   failed.iter().for_each(|i| warn!(message="failed", name=%i.name, reason=%i.reason));
   assert!(failed.is_empty());
 
-  let cellar_dir = config.base.prefix.join("Cellar");
+  let local_opt_dir = config.base.local_opt();
   let unpacked = with_progess_multibar(
     ACTIVE_PB.clone(),
     PbStyle::Bytes.style().into(),
     |tracker| unpack::exec(
       // TODO: force in args
-      unpack::Args::new(&config.base.prefix, &cellar_dir).force(true),
+      unpack::Args::new(&config.base.prefix, &local_opt_dir).force(true),
       &cached,
       tracker
     ),
@@ -59,6 +59,16 @@ pub async fn run(config: &Config, mirrors: &MirrorLists, query: QueryArgs) -> Re
   ).await.unwrap();
 
   unpacked.iter().for_each(|i| info!(message="unpacked", name=%i.name, dest=%i.dest.display()));
-
+  let linked = with_progess_bar(
+    ACTIVE_PB.clone(),
+    PbStyle::Items.style().into(),
+    ItemEvent::Init { max: unpacked.len() }.into(),
+    |tracker| link::exec(
+      &config.base.prefix,
+      &unpacked,
+      tracker,
+    ),
+    (),
+  ).await.unwrap();
   Ok(())
 }

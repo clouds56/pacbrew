@@ -14,7 +14,9 @@ mod tests {
   use crate::{io::fetch::MirrorLists, package::{formula::Formula, mirror::{MirrorServer, MirrorType}}, ui::bar::{PbWriter, Suspendable}};
 
   pub static FORMULA_FILE: &str = "cache/formula.json";
-  pub static CACHE_PATH: &str = "cache";
+  pub static CACHE_PATH: &str = "cache/download";
+  pub static PREFIX_PATH: &str = "cache/root";
+  pub static CELLAR_PATH: &str = "cache/root/_opt";
   pub static ARCH: &str = "arm64_sonoma";
   pub static MIRROR: (MirrorType, &str) = (MirrorType::Bottle, "https://mirrors.ustc.edu.cn/homebrew-bottles");
 
