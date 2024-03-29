@@ -1,6 +1,6 @@
 use std::path::Path;
 
-use crate::{error::{ErrorExt, Result}, package::package::PackageInstalled, ui::{event::ItemEvent, EventListener}};
+use crate::{error::{ErrorExt, Result}, package::package::{PackageInstalled, PackageLinked}, ui::{event::ItemEvent, EventListener}};
 
 pub fn symlink_dir<P: AsRef<Path>, Q: AsRef<Path>>(original: P, link: Q, force: bool) -> std::io::Result<()> {
   let link = link.as_ref();
@@ -44,19 +44,24 @@ pub async fn exec<'a, P: AsRef<Path>, I: IntoIterator<Item = &'a PackageInstalle
   prefix: P,
   pkgs: I,
   tracker: impl EventListener<ItemEvent>,
-) -> Result<()> {
+) -> Result<Vec<PackageLinked>> {
   let prefix = prefix.as_ref();
   let opt_dir = prefix.join("opt");
   std::fs::create_dir_all(&opt_dir).when(("create_dir_all", &opt_dir))?;
+  let mut result = Vec::new();
   for (i, pkg) in pkgs.into_iter().enumerate() {
     tracker.on_event(ItemEvent::Message { name: format!("linking {}", pkg.name) });
-    info!(?pkg);
     symlink_dir(&pkg.dest, opt_dir.join(&pkg.name), true).ok();
-    tracker.on_event(ItemEvent::Progress { current: i, max: None })
+    tracker.on_event(ItemEvent::Progress { current: i, max: None });
+    result.push(PackageLinked {
+      name: pkg.name.clone(),
+      dest: pkg.dest.clone(),
+      version: pkg.version.clone(),
+    })
   }
   tracker.on_event(ItemEvent::Message { name: "link finished".to_string() });
   tracker.on_event(ItemEvent::Finish);
-  Ok(())
+  Ok(result)
 }
 
 #[cfg(test)]
@@ -91,5 +96,6 @@ async fn test_link() {
     }
   }
 
-  exec(PREFIX_PATH, &pkgs, ()).await.unwrap();
+  let result = exec(PREFIX_PATH, &pkgs, ()).await.unwrap();
+  assert_eq!(result.len(), pkgs.len())
 }

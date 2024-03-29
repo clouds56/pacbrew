@@ -54,8 +54,8 @@ pub async fn exec<'a, I: IntoIterator<Item = &'a PackageCache> + Clone>(
   let pattern = RelocationPattern::new(args.prefix, args.cellar);
   tracker.on_event(Overall(Init { max: pkgs.clone().into_iter().count() }));
   for (i, pkg) in pkgs.into_iter().enumerate() {
-    info!(cache_pkg=%pkg.cache_pkg.display(), "");
     let tmp_target = Path::new(args.cellar).join(&pkg.name).join("tmp");
+    debug!(cache_pkg=%pkg.cache_pkg.display(), tmp_dir=%tmp_target.display());
     std::fs::remove_dir_all(&tmp_target).ok_not_found().when(("remove_dir_all", &tmp_target))?;
     std::fs::create_dir_all(&tmp_target).when(("create_dir_all", &tmp_target))?;
 
@@ -67,7 +67,7 @@ pub async fn exec<'a, I: IntoIterator<Item = &'a PackageCache> + Clone>(
     let version = guess_version(tmp_target.join(&pkg.name)).when(("unpack guess version", &tmp_target))?;
     let tmp_target_versioned = tmp_target.join(&pkg.name).join(&version);
     let target_versioned = Path::new(args.cellar).join(&pkg.name).join(&version);
-    debug!(tmp_target_versioned=%tmp_target_versioned.display(), target_versioned=%target_versioned.display(), "rename");
+    debug!(tmp_target_versioned=%tmp_target_versioned.display(), target_versioned=%target_versioned.display(), args.force, "rename");
     if args.force {
       std::fs::remove_dir_all(&target_versioned).ok();
     }

@@ -166,7 +166,7 @@ impl Relocations {
       cmd = cmd.args(["-rpath", i, v])
     }
     cmd = cmd.arg(filename.as_ref());
-    info!(?cmd, "install_name_tool");
+    debug!(?cmd, "install_name_tool");
     let result = cmd.output()?;
     for i in String::from_utf8_lossy(&result.stderr).lines() {
       if i.is_empty() || i.contains("invalidate the code signature") {

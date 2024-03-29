@@ -126,7 +126,7 @@ pub async fn untar_gz<P1: AsRef<Path>, P2: AsRef<Path>>(tar: P1, dest: P2, track
   let total_size = entries_size.values().sum();
   let item_count = entries_size.len();
   tracker.on_event(UnpackEvent { current_entry: None, pos: 0, total_size, item_current: 0, item_count });
-  info!(total_size, item_count);
+  debug!(total_size, item_count, "start unpack");
   let pos = AtomicU64::new(0);
   let idx = AtomicUsize::new(0);
   archive.get().await?.unpack(dest, |(entry, size)| {

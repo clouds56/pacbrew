@@ -121,3 +121,10 @@ pub struct PackageInstalled {
   pub version: String,
   pub reloc: BTreeMap<PathBuf, RelocateType>,
 }
+
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct PackageLinked {
+  pub name: String,
+  pub dest: PathBuf,
+  pub version: String,
+}

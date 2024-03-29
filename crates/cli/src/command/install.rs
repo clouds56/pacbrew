@@ -57,8 +57,8 @@ pub async fn run(config: &Config, mirrors: &MirrorLists, query: QueryArgs) -> Re
     ),
     (),
   ).await.unwrap();
-
   unpacked.iter().for_each(|i| info!(message="unpacked", name=%i.name, dest=%i.dest.display()));
+
   let linked = with_progess_bar(
     ACTIVE_PB.clone(),
     PbStyle::Items.style().into(),
@@ -70,5 +70,6 @@ pub async fn run(config: &Config, mirrors: &MirrorLists, query: QueryArgs) -> Re
     ),
     (),
   ).await.unwrap();
+  linked.iter().for_each(|i| info!(message="linked", name=%i.name, version=%i.version));
   Ok(())
 }
