@@ -40,8 +40,8 @@ pub struct RelocationPattern {
 
 impl RelocationPattern {
   pub fn new(prefix: &str, cellar: &str) -> Self {
-    let prefix = abs_path(prefix).unwrap_or_else(|| prefix.to_string());
-    let cellar = abs_path(cellar).unwrap_or_else(|| cellar.to_string());
+    let prefix = try_abs_path(prefix).unwrap_or_else(|| prefix.to_string());
+    let cellar = try_abs_path(cellar).unwrap_or_else(|| cellar.to_string());
     let mut install_name = BTreeMap::new();
     install_name.insert("@@HOMEBREW_PREFIX@@".to_string(), prefix.clone());
     install_name.insert("@@HOMEBREW_CELLAR@@".to_string(), cellar.clone());
@@ -77,8 +77,20 @@ impl RelocationPattern {
 }
 
 
-pub fn abs_path(path: &str) -> Option<String> {
-  Path::new(path).canonicalize().ok()?.to_str()?.to_string().into()
+pub fn try_abs_path(path: &str) -> Option<String> {
+  let path = Path::new(path);
+  let path = match path.canonicalize() {
+    Ok(path) => path,
+    Err(_) => if path.is_absolute() {
+      path.to_path_buf()
+    } else {
+      match Path::new(".").canonicalize() {
+        Ok(cur) => cur.join(path),
+        Err(_) => unreachable!("current dir does not exist"),
+      }
+    }
+  };
+  Some(path_clean::clean(path).to_string_lossy().into())
 }
 
 pub fn with_permission<P: AsRef<Path>, F: FnOnce() -> R, R>(filename: P, f: F) -> std::io::Result<R> {
@@ -152,7 +164,9 @@ impl Relocations {
     for (i, v) in &self.rpaths {
       cmd = cmd.args(["-rpath", i, v])
     }
-    let result = cmd.arg(filename.as_ref()).output()?;
+    cmd = cmd.arg(filename.as_ref());
+    info!(?cmd, "install_name_tool");
+    let result = cmd.output()?;
     for i in String::from_utf8_lossy(&result.stderr).lines() {
       if i.is_empty() || i.contains("invalidate the code signature") {
         continue;

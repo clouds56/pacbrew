@@ -247,7 +247,7 @@ where
   let fut = unsafe { make_static(f(pb_tracker)) };
   let handle = tokio::spawn(fut);
   while let Some(event) = events.recv().await {
-    debug!(?event);
+    trace!(?event);
     pb_multi_bar.on_event(event.clone());
     tracker.on_event(event);
   }

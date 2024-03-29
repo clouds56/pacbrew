@@ -119,7 +119,7 @@ impl<R: tokio::io::AsyncRead + Unpin> ArchiveExt for tokio_tar::Archive<R> {
 }
 
 
-pub async fn untar_gz<P1: AsRef<Path>, P2: AsRef<Path>>(tar: P1, dest: P2, tracker: impl EventListener<UnpackEvent>) -> Result<()> {
+pub async fn untar_gz<P1: AsRef<Path>, P2: AsRef<Path>>(tar: P1, dest: P2, tracker: impl EventListener<UnpackEvent>) -> Result<(usize, u64)> {
   let file = tokio::fs::File::open(tar.as_ref()).await.when(("untar.open", tar.as_ref()))?;
   let mut archive = Archive::new(file, GzipTransformer);
   let entries_size = archive.get().await?.uncompressed_size().await?;
@@ -134,7 +134,7 @@ pub async fn untar_gz<P1: AsRef<Path>, P2: AsRef<Path>>(tar: P1, dest: P2, track
     let idx = idx.fetch_add(1, std::sync::atomic::Ordering::AcqRel);
     tracker.on_event(UnpackEvent { current_entry: Some(entry), pos: pos+size, total_size, item_current: idx+1, item_count })
   }).await?;
-  Ok(())
+  Ok((idx.load(std::sync::atomic::Ordering::Acquire), pos.load(std::sync::atomic::Ordering::Acquire)))
 }
 
 #[tokio::test]
