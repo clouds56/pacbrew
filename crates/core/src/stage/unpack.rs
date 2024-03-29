@@ -1,6 +1,6 @@
 use std::{ffi::OsString, path::{Path, PathBuf}, sync::{Arc, Mutex}};
 
-use crate::{error::{ErrorExt, IoErrorExt, Result}, io::{relocate::{relocate, RelocateType, RelocationPattern}, untar::{untar_gz, UnpackEvent}}, package::package::PackageCache, ui::{event::{BytesEvent, DetailEvent}, EventListener}};
+use crate::{error::{ErrorExt, IoErrorExt, Result}, io::{relocate::{relocate, RelocateType, RelocationPattern}, untar::{untar_gz, UnpackEvent}}, package::package::{PackageCache, PackageInstalled}, ui::{event::{BytesEvent, DetailEvent}, EventListener}};
 
 pub async fn step<P: AsRef<Path>, Q: AsRef<Path>>(pattern: &RelocationPattern, cache_pkg: P, dest_dir: Q, tracker: impl EventListener<BytesEvent>) -> Result<Vec<(PathBuf, RelocateType)>> {
   use crate::ui::event::Event::*;
@@ -29,21 +29,25 @@ pub async fn step<P: AsRef<Path>, Q: AsRef<Path>>(pattern: &RelocationPattern, c
   Ok(relocates)
 }
 
-pub struct Value {
-  pub name: String,
-  pub dest: PathBuf,
-}
-
 pub struct Args<'a> {
-  pub prefix: &'a str,
-  pub cellar: &'a str,
+  pub prefix: &'a Path,
+  pub cellar: &'a Path,
+  pub force: bool,
+}
+impl<'a> Args<'a> {
+  pub fn new<P1: AsRef<Path>, P2: AsRef<Path>>(prefix: &'a P1, cellar: &'a P2) -> Self {
+    Self { prefix: prefix.as_ref(), cellar: cellar.as_ref(), force: false }
+  }
+  pub fn force(self, f: bool) -> Self {
+    Self { force: f, ..self }
+  }
 }
 
 pub async fn exec<'a, I: IntoIterator<Item = &'a PackageCache> + Clone>(
   args: Args<'a>,
   pkgs: I,
   tracker: impl EventListener<DetailEvent<usize, u64>>
-) -> Result<Vec<Value>> {
+) -> Result<Vec<PackageInstalled>> {
   use DetailEvent::*;
   use crate::ui::event::Event::*;
   let mut result = Vec::new();
@@ -57,20 +61,24 @@ pub async fn exec<'a, I: IntoIterator<Item = &'a PackageCache> + Clone>(
 
     tracker.on_event(Item(i, Message { name: format!("{}", pkg.name) }));
     tracker.on_event(Item(i, Message { name: format!("unpacking {}", pkg.name) }));
-    step(&pattern, &pkg.cache_pkg, &tmp_target, |e: BytesEvent| tracker.on_event(Item(i, e))).await?;
+    let reloc = step(&pattern, &pkg.cache_pkg, &tmp_target, |e: BytesEvent| tracker.on_event(Item(i, e))).await?;
     tracker.on_event(Item(i, Finish));
     tracker.on_event(Overall(Progress { current: i, max: None }));
     let version = guess_version(tmp_target.join(&pkg.name)).when(("unpack guess version", &tmp_target))?;
     let tmp_target_versioned = tmp_target.join(&pkg.name).join(&version);
     let target_versioned = Path::new(args.cellar).join(&pkg.name).join(&version);
     debug!(tmp_target_versioned=%tmp_target_versioned.display(), target_versioned=%target_versioned.display(), "rename");
-    std::fs::remove_dir_all(&target_versioned).ok();
+    if args.force {
+      std::fs::remove_dir_all(&target_versioned).ok();
+    }
     std::fs::rename(&tmp_target_versioned, &target_versioned).when(("unpack.rename", &tmp_target_versioned))?;
     std::fs::remove_dir_all(&tmp_target).ok();
 
-    result.push(Value {
+    result.push(PackageInstalled {
       name: pkg.name.clone(),
       dest: target_versioned,
+      version: version.to_string_lossy().to_string(),
+      reloc: reloc.into_iter().collect(),
     });
   }
   tracker.on_event(Overall(Finish));
@@ -96,7 +104,7 @@ async fn test_verify() {
   let pkgs = crate::stage::verify::get_pkgs(&packages, CACHE_PATH);
 
   let result = crate::ui::with_progess_multibar(active_pb, None, |tracker| exec(
-    Args{prefix: "cache/root", cellar: "cache/root/opt_"},
+    Args::new(&"cache/root",&"cache/root/opt_").force(true),
     pkgs.iter().map(|i| &i.2),
     tracker
   ), ()).await.unwrap();

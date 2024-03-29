@@ -1,6 +1,7 @@
-use std::path::PathBuf;
+use std::{collections::BTreeMap, path::PathBuf};
 
 use super::formula::Formula;
+use crate::io::relocate::RelocateType;
 
 #[derive(Debug, serde::Serialize, serde::Deserialize)]
 pub struct Package {
@@ -111,4 +112,12 @@ pub struct PackageCache {
   pub name: String,
   pub cache_pkg: PathBuf,
   pub cache_size: u64,
+}
+
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct PackageInstalled {
+  pub name: String,
+  pub dest: PathBuf,
+  pub version: String,
+  pub reloc: BTreeMap<PathBuf, RelocateType>,
 }

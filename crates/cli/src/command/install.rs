@@ -45,10 +45,16 @@ pub async fn run(config: &Config, mirrors: &MirrorLists, query: QueryArgs) -> Re
   failed.iter().for_each(|i| warn!(message="failed", name=%i.name, reason=%i.reason));
   assert!(failed.is_empty());
 
+  let cellar_dir = config.base.prefix.join("Cellar");
   let unpacked = with_progess_multibar(
     ACTIVE_PB.clone(),
     PbStyle::Bytes.style().into(),
-    |tracker| unpack::exec(config.base.prefix.join("Cellar"), &cached, tracker),
+    |tracker| unpack::exec(
+      // TODO: force in args
+      unpack::Args::new(&config.base.prefix, &cellar_dir).force(true),
+      &cached,
+      tracker
+    ),
     (),
   ).await.unwrap();
 

@@ -19,7 +19,7 @@
 ///!   https://github.com/Homebrew/brew/blob/master/Library/Homebrew/extend/os/mac/keg_relocate.rb
 ///!   https://opensource.apple.com/source/cctools/cctools-795/misc/install_name_tool.c.auto.html
 
-use std::{borrow::Cow, collections::BTreeMap, path::Path};
+use std::{borrow::Cow, collections::BTreeMap, path::{Path, PathBuf}};
 
 use goblin::mach::MachO;
 use memmap2::MmapOptions;
@@ -39,9 +39,10 @@ pub struct RelocationPattern {
 }
 
 impl RelocationPattern {
-  pub fn new(prefix: &str, cellar: &str) -> Self {
-    let prefix = try_abs_path(prefix).unwrap_or_else(|| prefix.to_string());
-    let cellar = try_abs_path(cellar).unwrap_or_else(|| cellar.to_string());
+  pub fn new<P1: AsRef<Path>, P2: AsRef<Path>>(prefix: P1, cellar: P2) -> Self {
+    // TODO: unwrap 1. current dir exists, 2. utf8 system
+    let prefix = try_abs_path(&prefix).unwrap().to_str().unwrap().to_string();
+    let cellar = try_abs_path(&cellar).unwrap().to_str().unwrap().to_string();
     let mut install_name = BTreeMap::new();
     install_name.insert("@@HOMEBREW_PREFIX@@".to_string(), prefix.clone());
     install_name.insert("@@HOMEBREW_CELLAR@@".to_string(), cellar.clone());
@@ -77,8 +78,8 @@ impl RelocationPattern {
 }
 
 
-pub fn try_abs_path(path: &str) -> Option<String> {
-  let path = Path::new(path);
+pub fn try_abs_path<P: AsRef<Path>>(path: P) -> Option<PathBuf> {
+  let path = path.as_ref();
   let path = match path.canonicalize() {
     Ok(path) => path,
     Err(_) => if path.is_absolute() {
@@ -90,7 +91,7 @@ pub fn try_abs_path(path: &str) -> Option<String> {
       }
     }
   };
-  Some(path_clean::clean(path).to_string_lossy().into())
+  Some(path_clean::clean(path))
 }
 
 pub fn with_permission<P: AsRef<Path>, F: FnOnce() -> R, R>(filename: P, f: F) -> std::io::Result<R> {
@@ -193,7 +194,7 @@ impl Relocations {
   }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub enum RelocateType {
   MachO, Text, None
 }
