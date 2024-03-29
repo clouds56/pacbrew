@@ -1,4 +1,4 @@
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use sha2::{Digest, Sha256};
 use tokio::io::AsyncReadExt;
@@ -7,6 +7,7 @@ use crate::{error::{ErrorExt, Result}, package::package::{PackageCache, PackageU
 
 pub struct Failed {
   pub name: String,
+  pub file: PathBuf,
   pub reason: String,
 }
 
@@ -73,6 +74,7 @@ pub async fn exec<'a, P: AsRef<Path>, I: IntoIterator<Item = (&'a PkgBuild, &'a 
     if let Some(reason) = reason {
       result.push(Failed {
         name: pkg.name.clone(),
+        file: cached.cache_pkg.clone(),
         reason: reason.to_string(),
       });
     }
@@ -82,7 +84,7 @@ pub async fn exec<'a, P: AsRef<Path>, I: IntoIterator<Item = (&'a PkgBuild, &'a 
   tracker.on_event(DetailEvent::Overall(ItemEvent::Message { name: "verify finished".to_string() }));
   tracker.on_event(DetailEvent::Overall(ItemEvent::Finish));
 
-  Ok(vec![])
+  Ok(result)
 }
 
 #[cfg(test)]

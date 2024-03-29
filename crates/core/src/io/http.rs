@@ -66,6 +66,10 @@ impl DownloadTask {
     }
     let client = self.client.clone().unwrap_or_else(|| reqwest::Client::new());
     let resp = client.get(self.url.clone()).send().await.when_download(&self)?;
+    if !resp.status().is_success() {
+      info!(url=%self.url, filename=%self.filename.display(), status_code=?resp.status(), "request failed");
+      return Err(std::io::Error::other(format!("download from {} failed with status {}", self.url, resp.status()))).when(("dowanlod", &self.filename))?;
+    }
     let length = resp.content_length().unwrap_or(0);
     let mut partial_len = 0;
     let tmp_filename = tmp_path(&self.filename, ".part");

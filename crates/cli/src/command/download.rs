@@ -1,5 +1,5 @@
 use anyhow::Result;
-use core_lib::{io::{fetch::MirrorLists, read::read_formulas}, stage::{download, probe, resolve, verify}, ui::{event::{simplify_tracker, ItemEvent}, with_progess_bar, with_progess_multibar}};
+use core_lib::{io::{fetch::MirrorLists, read::{read_formulas, tmp_path}}, stage::{download, probe, resolve, verify}, ui::{event::{simplify_tracker, ItemEvent}, with_progess_bar, with_progess_multibar}};
 
 use crate::{command::PbStyle, config::Config, ACTIVE_PB};
 
@@ -22,7 +22,7 @@ pub async fn run(config: &Config, mirrors: &MirrorLists, query: QueryArgs) -> Re
     ()
   ).await.unwrap();
 
-  info!(message="probe", ?resolved.names, resolved.len=resolved.packages.iter().map(|i| i.name.as_str()).collect::<Vec<_>>().join(","));
+  info!(message="probe", ?resolved.names, resolved=resolved.packages.iter().map(|i| i.name.as_str()).collect::<Vec<_>>().join(","));
   let urls = with_progess_bar(
     ACTIVE_PB.clone(),
     Some(PbStyle::Items.style()),
@@ -63,7 +63,11 @@ pub async fn run(config: &Config, mirrors: &MirrorLists, query: QueryArgs) -> Re
     ()
   ).await.unwrap();
 
-  failed.iter().for_each(|i| warn!(message="failed", name=%i.name, reason=%i.reason));
+  failed.iter().for_each(|i| {
+    warn!(message="failed", name=%i.name, reason=%i.reason);
+    eprintln!("file {} may be broken for package {}", i.file.display(), i.name);
+    std::fs::rename(&i.file, tmp_path(&i.file, "broken")).ok();
+  });
   assert!(failed.is_empty());
   Ok(())
 }

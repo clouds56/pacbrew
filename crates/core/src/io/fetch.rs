@@ -70,8 +70,12 @@ pub async fn fetch_remote<P: AsRef<Path>>(mirrors: &MirrorLists, req: FetchReq, 
   if let Some(i) = path.as_ref().parent() {
     std::fs::create_dir_all(i).when(("create_dir_all", i))?;
   }
+  let mut retrying = false;
   for (client, url) in mirrors.url_iter(req.clone()) {
     debug!(message="try mirror", url);
+    if retrying {
+      info!(url, "download failed, retrying");
+    }
     let mut task = DownloadTask::new(url, filename, None)?;
     // TODO: keep partial download
     match task.client(Some(client)).force(true).run(|e| tracker.on_event(e)).await {
@@ -79,7 +83,10 @@ pub async fn fetch_remote<P: AsRef<Path>>(mirrors: &MirrorLists, req: FetchReq, 
         tracker.on_event(state.clone());
         return Ok(())
       },
-      Err(e) => warn!(%e, message="download failed"),
+      Err(e) => {
+        warn!(error=%e, message="download failed");
+        retrying = true;
+      }
     }
   }
   return Err(Error::MirrorFailed(req));
