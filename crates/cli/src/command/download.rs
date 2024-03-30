@@ -22,6 +22,7 @@ pub async fn run(config: &Config, mirrors: &MirrorLists, query: QueryArgs) -> Re
     ()
   ).await.unwrap();
 
+  let cache_pkg = config.base.cache_pkg();
   info!(message="probe", ?resolved.names, resolved=resolved.packages.iter().map(|i| i.name.as_str()).collect::<Vec<_>>().join(","));
   let urls = with_progess_bar(
     ACTIVE_PB.clone(),
@@ -29,7 +30,7 @@ pub async fn run(config: &Config, mirrors: &MirrorLists, query: QueryArgs) -> Re
     Some(ItemEvent::Init { max: resolved.packages.len() }),
     |tracker| probe::exec(
       probe::Args::new(&config.base.arch, mirrors)
-        .cache(&config.base.cache, false),
+        .cache(&cache_pkg, false),
       &resolved.packages,
       tracker
     ),
@@ -42,7 +43,7 @@ pub async fn run(config: &Config, mirrors: &MirrorLists, query: QueryArgs) -> Re
     Some(PbStyle::Bytes.style()),
     |tracker| download::exec(
       mirrors,
-      &config.base.cache,
+      &cache_pkg,
       urls.iter().filter(|v| !v.cached).map(|i| (&i.pkg, &i.url)),
       tracker
     ),
@@ -56,7 +57,7 @@ pub async fn run(config: &Config, mirrors: &MirrorLists, query: QueryArgs) -> Re
     Some(PbStyle::Items.style()),
     Some(ItemEvent::Init { max: cached.len() }),
     |tracker| verify::exec(
-      &config.base.cache,
+      &cache_pkg,
       urls.iter().map(|a| (&a.pkg, &a.url, None)),
       simplify_tracker(tracker)
     ),

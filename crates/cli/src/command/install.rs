@@ -18,17 +18,18 @@ pub async fn run(config: &Config, mirrors: &MirrorLists, query: QueryArgs) -> Re
     (),
   ).await.unwrap();
 
+  let cached_pkg = config.base.cache_pkg();
   info!(message="probe", ?resolved.names, resolved=resolved.packages.iter().map(|i| i.name.as_str()).collect::<Vec<_>>().join(","));
   let urls = probe::exec(
     probe::Args::new(&config.base.arch, mirrors)
-      .cache(&config.base.cache, false),
+      .cache(&cached_pkg, false),
     &resolved.packages,
     (),
   ).await.unwrap();
 
   let mut cached = Vec::new();
   for i in &urls {
-    let cache_pkg = config.base.cache.join(&i.pkg.filename);
+    let cache_pkg = cached_pkg.join(&i.pkg.filename);
     let cache_size = std::fs::metadata(&cache_pkg).map(|a| a.len()).unwrap();
     cached.push(PackageCache {
       name: i.pkg.name.clone(),
@@ -39,7 +40,7 @@ pub async fn run(config: &Config, mirrors: &MirrorLists, query: QueryArgs) -> Re
 
   info!(message="verify", cached.len=cached.len(), urls.len=urls.len());
   let failed = verify::exec(
-    &config.base.cache,
+    &cached_pkg,
     urls.iter().map(|a| (&a.pkg, &a.url, None)),
     (),
   ).await.unwrap();

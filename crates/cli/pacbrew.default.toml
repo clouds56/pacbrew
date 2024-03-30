@@ -1,0 +1,14 @@
+[log]
+rust_log = "info"
+file = ".pacbrew/cache/pacbrew/log/pacbrew.log"
+
+[base]
+cache = ".pacbrew/cache/pacbrew"
+db = ".pacbrew/cache/pacbrew/db"
+prefix = ".pacbrew"
+arch = "arm64_sonoma"
+
+[[mirror_list]]
+api_url = "https://formulae.brew.sh/api/formula.json"
+url = "https://ghcr.io/v2/homebrew/core"
+type = 'Oci'

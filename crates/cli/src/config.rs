@@ -11,8 +11,8 @@ pub struct Mirror {
 
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct Config {
-  #[serde(skip_serializing_if = "Option::is_none")]
-  pub rust_log: Option<String>,
+  #[serde(default, skip_serializing_if = "LogConfig::is_empty")]
+  pub log: LogConfig,
   pub mirror_list: Vec<Mirror>,
   pub base: BaseConfig,
   #[serde(default)]
@@ -32,6 +32,17 @@ pub struct BaseConfig {
 impl BaseConfig {
   pub fn formula_json(&self) -> PathBuf { self.cache.join("formula.json") }
   pub fn local_opt(&self) -> PathBuf { self.local_opt.clone().unwrap_or_else(|| self.prefix.join("local").join("opt")) }
+  pub fn cache_pkg(&self) -> PathBuf { self.cache.join("pkg") }
+}
+
+#[derive(Debug, Clone, Default, serde::Serialize, serde::Deserialize)]
+pub struct LogConfig {
+  pub rust_log: Option<String>,
+  pub file: Option<PathBuf>,
+}
+
+impl LogConfig {
+  pub fn is_empty(&self) -> bool { self.rust_log.is_none() && self.file.is_none() }
 }
 
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]

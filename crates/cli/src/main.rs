@@ -58,7 +58,7 @@ async fn main() {
   info!(cwd=%std::env::current_dir().unwrap().display());
   info!(default_config, exists=Path::new(default_config).exists());
   let config: config::Config = read_toml(default_config).unwrap();
-  if let Some(log) = config.rust_log.as_deref() {
+  if let Some(log) = config.log.rust_log.as_deref() {
     reload_handle.reload(tracing_subscriber::EnvFilter::new(log)).ok();
   }
   let args = Args::parse();
@@ -69,6 +69,14 @@ async fn main() {
   match args.command {
     Command::Update => command::update::run(&config, &mirrors).await.unwrap(),
     Command::Download(query) => command::download::run(&config, &mirrors, query).await.unwrap(),
-    Command::Install(query) => command::install::run(&config, &mirrors, query).await.unwrap(),
+    Command::Install(query) => {
+      command::install::run(&config, &mirrors, query.clone()).await.unwrap();
+      if let Some(log_file) = config.log.file.as_ref() {
+        use std::io::Write;
+        std::fs::create_dir_all(log_file.parent().unwrap()).ok();
+        let mut file = std::fs::OpenOptions::new().create(true).append(true).open(log_file).unwrap();
+        write!(file, "install {}\n", query.names.join(",")).unwrap();
+      }
+    },
   }
 }
