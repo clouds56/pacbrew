@@ -9,6 +9,8 @@ use super::QueryArgs;
 pub async fn run(config: &Config, mirrors: &MirrorLists, query: QueryArgs) -> Result<()> {
   let formulas = read_formulas(config.base.formula_json())?;
 
+  super::download::run(config, mirrors, query.clone()).await.ok();
+
   info!(message="resolve", ?query.names);
   let resolved = resolve::exec(
     &formulas,

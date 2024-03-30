@@ -1,6 +1,6 @@
 #[macro_use] extern crate tracing;
 
-use std::sync::{Arc, RwLock};
+use std::{path::Path, sync::{Arc, RwLock}};
 
 use clap::Parser;
 use core_lib::{io::{fetch::MirrorLists, read::read_toml}, package::mirror::MirrorServer, ui::bar::{ActiveSuspendable, PbWriter}};
@@ -26,19 +26,41 @@ lazy_static::lazy_static! {
   static ref ACTIVE_PB: ActiveSuspendable = Arc::new(RwLock::new(None));
 }
 
-#[tokio::main]
-async fn main() {
-  dotenvy::dotenv().ok();
-  let _ = tracing_subscriber::fmt()
-    .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
+type TracingReloadHandle = tracing_subscriber::reload::Handle<tracing_subscriber::EnvFilter, tracing_subscriber::Registry>;
+fn init_logger() -> TracingReloadHandle {
+  use tracing_subscriber::{reload, EnvFilter, prelude::*};
+  let fmt = tracing_subscriber::fmt::layer()
     .with_span_events(FmtSpan::NEW | FmtSpan::CLOSE)
     .compact()
     .with_writer(move || PbWriter::new(ACTIVE_PB.read().unwrap().clone(), std::io::stderr()))
+    // .finish();
+    ;
+  let (filter, reload_handle) = reload::Layer::new(EnvFilter::new("warn"));
+  let _ = tracing_subscriber::registry()
+    .with(filter)
+    .with(fmt)
     .init();
-  let root = std::env::var("CARGO_MANIFEST_DIR").unwrap();
-  std::env::set_current_dir(&root).ok();
-  info!(cwd=root);
-  let config: config::Config = read_toml("pacbrew.toml").unwrap();
+  reload_handle
+}
+
+#[tokio::main]
+async fn main() {
+  let mut default_config: &'static str = ".config/pacbrew/config.toml";
+  std::env::vars().for_each(|(k, v)| trace!(%k, %v));
+  if let Some(root) = std::env::var("CARGO_MANIFEST_DIR").ok() {
+    std::env::set_current_dir(&root).ok();
+    default_config = "pacbrew.toml"
+  } else if let Some(home) = std::env::var("HOME").ok() {
+    std::env::set_current_dir(&home).ok();
+  }
+  dotenvy::dotenv().ok();
+  let reload_handle = init_logger();
+  info!(cwd=%std::env::current_dir().unwrap().display());
+  info!(default_config, exists=Path::new(default_config).exists());
+  let config: config::Config = read_toml(default_config).unwrap();
+  if let Some(log) = config.rust_log.as_deref() {
+    reload_handle.reload(tracing_subscriber::EnvFilter::new(log)).ok();
+  }
   let args = Args::parse();
   info!(?config, ?args);
   let mirrors = MirrorLists {

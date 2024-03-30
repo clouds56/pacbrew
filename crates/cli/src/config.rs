@@ -11,6 +11,8 @@ pub struct Mirror {
 
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct Config {
+  #[serde(skip_serializing_if = "Option::is_none")]
+  pub rust_log: Option<String>,
   pub mirror_list: Vec<Mirror>,
   pub base: BaseConfig,
   #[serde(default)]
