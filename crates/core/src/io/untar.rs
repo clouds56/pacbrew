@@ -101,6 +101,8 @@ impl<R: tokio::io::AsyncRead + Unpin> ArchiveExt for tokio_tar::Archive<R> {
     let mut entries = self.entries().when(("untar.read_entries", &tar))?;
     while let Some(entry) = entries.next().await {
       let mut entry = entry.when(("untar.get_entry", &tar))?;
+      // TODO: node/21.7.1/libexec/lib/node_modules/npm/node_modules/@npmcli/package-json/lib/update-dependencies.js
+      debug!(?entry);
       let entry_path = entry.path().when(("untar.get_entry_path", &tar))?.into_owned();
       let entry_size = entry.header().size().when(("total_size.get_entry_size", &tar))?;
       let path = dest.join(&entry_path);
@@ -109,8 +111,12 @@ impl<R: tokio::io::AsyncRead + Unpin> ArchiveExt for tokio_tar::Archive<R> {
         continue;
       }
       if let Some(dir) = path.parent() {
-        tokio::fs::create_dir_all(dir).await.when(("untar.create_dir_all_for_entry", dir))?;
+        if !dir.exists() {
+          debug!(dir=%dir.display(), "create_dir_all");
+          tokio::fs::create_dir_all(dir).await.when(("untar.create_dir_all_for_entry", dir))?;
+        }
       }
+      debug!(entry=%entry_path.display(), "extract");
       entry.unpack_in(dest).await.when(("untar.unpack_entry", &tar.join("!").join(&entry_path)))?;
       tracker.on_event((entry_path, entry_size))
     }
