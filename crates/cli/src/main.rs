@@ -74,12 +74,14 @@ async fn main() {
     Command::Download(query) => command::download::run(&config, &mirrors, query).await.unwrap(),
     Command::Import(query) => command::import::run(&config, query).unwrap(),
     Command::Install(query) => {
-      command::install::run(&config, &mirrors, query.clone()).await.unwrap();
-      if let Some(log_file) = config.log.file.as_ref() {
+      let installed = command::install::run(&config, &mirrors, query.clone()).await.unwrap();
+      if installed {
+        if let Some(log_file) = config.log.file.as_ref() {
         use std::io::Write;
         std::fs::create_dir_all(log_file.parent().unwrap()).ok();
         let mut file = std::fs::OpenOptions::new().create(true).append(true).open(log_file).unwrap();
         write!(file, "install {}\n", query.names.join(",")).unwrap();
+        }
       }
     },
     Command::List(args) => command::list::run(&config, args).unwrap(),

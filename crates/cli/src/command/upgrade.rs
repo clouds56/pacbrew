@@ -1,7 +1,7 @@
 use std::collections::HashMap;
 
 use anyhow::Result;
-use core_lib::{db, io::{fetch::MirrorLists, read::read_formulas}, package::package::PackageVersion};
+use core_lib::{db::{self, InstalledVersionStatus}, io::{fetch::MirrorLists, read::read_formulas}, package::package::PackageVersion};
 
 use crate::config::Config;
 
@@ -19,7 +19,7 @@ pub async fn run(config: &Config, mirrors: &MirrorLists) -> Result<()> {
 
   let outdated = installed.into_iter()
     .filter_map(|pkg| match latest_versions.get(&pkg.name) {
-      Some(latest) if latest != &pkg.version => Some(pkg.name),
+      Some(latest) if db::version_status(Some(&pkg.version), latest) == InstalledVersionStatus::Outdated => Some(pkg.name),
       _ => None,
     })
     .collect::<Vec<_>>();
@@ -30,5 +30,6 @@ pub async fn run(config: &Config, mirrors: &MirrorLists) -> Result<()> {
   }
 
   eprintln!("upgrading {} package(s): {}", outdated.len(), outdated.join(", "));
-  super::install::run(config, mirrors, QueryArgs { names: outdated }).await
+  super::install::run(config, mirrors, QueryArgs { names: outdated }).await?;
+  Ok(())
 }

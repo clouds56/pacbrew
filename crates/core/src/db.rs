@@ -1,10 +1,17 @@
-use std::{path::{Path, PathBuf}, time::{SystemTime, UNIX_EPOCH}};
+use std::{collections::HashMap, path::{Path, PathBuf}, time::{SystemTime, UNIX_EPOCH}};
 
 use crate::{error::{ErrorExt, Result}, io::read::{read_toml, write_to_file, write_toml}, package::package::{InstalledPackage, InstalledPackageRecord}};
 
 const LOCAL_DIR: &str = "local";
 const RECORD_FILE: &str = "desc.toml";
 const FILES_FILE: &str = "files.txt";
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum InstalledVersionStatus {
+  Missing,
+  Satisfied,
+  Outdated,
+}
 
 fn local_dir(root: &Path) -> PathBuf {
   root.join(LOCAL_DIR)
@@ -78,6 +85,21 @@ pub fn list_installed(root: &Path) -> Result<Vec<InstalledPackageRecord>> {
   Ok(result)
 }
 
+pub fn installed_index(root: &Path) -> Result<HashMap<String, InstalledPackageRecord>> {
+  Ok(list_installed(root)?
+    .into_iter()
+    .map(|record| (record.name.clone(), record))
+    .collect())
+}
+
+pub fn version_status(installed_version: Option<&str>, candidate_version: &str) -> InstalledVersionStatus {
+  match installed_version {
+    None => InstalledVersionStatus::Missing,
+    Some(version) if version == candidate_version => InstalledVersionStatus::Satisfied,
+    Some(_) => InstalledVersionStatus::Outdated,
+  }
+}
+
 pub fn read_installed(root: &Path, name: &str) -> Result<Option<InstalledPackage>> {
   let local_root = local_dir(root);
   if !local_root.exists() {
@@ -123,7 +145,7 @@ mod tests {
     ))
   }
 
-  use super::{list_installed, read_installed, write_installed};
+  use super::{installed_index, list_installed, read_installed, version_status, write_installed, InstalledVersionStatus};
 
   #[test]
   fn test_db_roundtrip() {
@@ -150,6 +172,13 @@ mod tests {
     let loaded = read_installed(&root, "wget").unwrap().unwrap();
     assert_eq!(loaded.record.version, "1.0.0");
     assert_eq!(loaded.files, package.files);
+
+    let index = installed_index(&root).unwrap();
+    assert_eq!(index.get("wget").unwrap().version, "1.0.0");
+
+    assert_eq!(version_status(None, "1.0.0"), InstalledVersionStatus::Missing);
+    assert_eq!(version_status(Some("1.0.0"), "1.0.0"), InstalledVersionStatus::Satisfied);
+    assert_eq!(version_status(Some("0.9.0"), "1.0.0"), InstalledVersionStatus::Outdated);
 
     std::fs::remove_dir_all(&root).ok();
   }

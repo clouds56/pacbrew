@@ -1,5 +1,5 @@
 use anyhow::Result;
-use core_lib::db;
+use core_lib::db::{self, InstalledVersionStatus};
 use core_lib::io::read::read_formulas;
 use core_lib::package::package::InstallReason;
 use core_lib::package::package::PackageVersion;
@@ -36,7 +36,7 @@ pub fn run(config: &Config, args: ListArgs) -> Result<()> {
       let Some(latest) = latest_versions.get(&pkg.name) else {
         continue;
       };
-      if latest == &pkg.version {
+      if db::version_status(Some(&pkg.version), latest) != InstalledVersionStatus::Outdated {
         continue;
       }
       println!("{} {} -> {}", pkg.name, pkg.version, latest);
