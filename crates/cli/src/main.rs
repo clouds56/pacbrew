@@ -19,6 +19,7 @@ pub struct Args {
 pub enum Command {
   Update,
   Download(command::QueryArgs),
+  Import(command::QueryArgs),
   Install(command::QueryArgs),
   List,
 }
@@ -70,6 +71,7 @@ async fn main() {
   match args.command {
     Command::Update => command::update::run(&config, &mirrors).await.unwrap(),
     Command::Download(query) => command::download::run(&config, &mirrors, query).await.unwrap(),
+    Command::Import(query) => command::import::run(&config, query).unwrap(),
     Command::Install(query) => {
       command::install::run(&config, &mirrors, query.clone()).await.unwrap();
       if let Some(log_file) = config.log.file.as_ref() {

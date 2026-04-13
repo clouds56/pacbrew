@@ -37,7 +37,7 @@ impl std::fmt::Debug for PkgBuild {
   }
 }
 
-#[derive(Debug, serde::Serialize, serde::Deserialize)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct PackageVersion {
   pub name: String,
   pub version: String,

@@ -2,6 +2,7 @@ use indicatif::ProgressStyle;
 
 pub mod update;
 pub mod download;
+pub mod import;
 pub mod install;
 pub mod list;
 

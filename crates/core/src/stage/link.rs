@@ -130,6 +130,12 @@ fn collect_link_targets(opt_path: &Path) -> Result<Vec<String>> {
   Ok(to_link)
 }
 
+pub fn owned_files(name: &str, dest: &Path) -> Result<Vec<String>> {
+  let mut files = vec![format!("opt/{}", name)];
+  files.extend(collect_link_targets(dest)?);
+  Ok(files)
+}
+
 #[tracing::instrument(level = "debug", skip(prefix, opt_path, tracker), fields(prefix = %prefix.as_ref().display(), opt_path = %opt_path.as_ref().display()))]
 pub async fn step<P: AsRef<Path>, Q: AsRef<Path>>(prefix: P, opt_path: Q, tracker: impl EventListener<ItemEvent>) -> Result<()> {
   // TODO: generate list of link and check conflict before unpack
@@ -167,8 +173,7 @@ pub async fn exec<'a, P: AsRef<Path>, I: IntoIterator<Item = &'a PackageInstalle
   let mut result = Vec::new();
   for (i, pkg) in pkgs.into_iter().enumerate() {
     tracker.on_event(ItemEvent::Message { name: format!("linking {}", pkg.name) });
-    let mut files = vec![format!("opt/{}", pkg.name)];
-    files.extend(collect_link_targets(&pkg.dest)?);
+    let files = owned_files(&pkg.name, &pkg.dest)?;
     symlink_dir(&pkg.dest, opt_dir.join(&pkg.name), true).ok();
     tracker.on_event(ItemEvent::Progress { current: i, max: None });
     step(prefix, &pkg.dest, ()).await?;
