@@ -145,24 +145,7 @@ pub async fn step<P: AsRef<Path>, Q: AsRef<Path>>(prefix: P, opt_path: Q, tracke
   tracker.on_event(ItemEvent::Init { max: to_link.len() });
   for (i, file) in to_link.into_iter().enumerate() {
     info!(file, "linking");
-    let src_path = opt_path.join(&file);
-    let src = match std::fs::symlink_metadata(&src_path) {
-      Ok(meta) if meta.file_type().is_symlink() => {
-        let target = std::fs::read_link(&src_path).when(("step.read_link", &src_path))?;
-        let resolved = if target.is_absolute() {
-          target
-        } else {
-          src_path.parent().unwrap_or(Path::new(".")).join(target)
-        };
-        if !resolved.exists() {
-          warn!(src=%src_path.display(), target=%resolved.display(), "skip dangling symlink while linking");
-          continue;
-        }
-        resolved.canonicalize().when(("step.src_symlink_target", &resolved))?
-      }
-      Ok(_) => src_path.canonicalize().when(("step.src", &src_path))?,
-      Err(e) => return Err(e).when(("step.src", &src_path)),
-    };
+    let src = opt_path.join(&file).canonicalize().when(("step.src", &opt_path.join(&file)))?;
     let dest = prefix.join(&file);
     if let Some(parent) = dest.parent() {
       if !parent.exists() {
