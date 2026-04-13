@@ -1,5 +1,7 @@
 use anyhow::Result;
-use core_lib::{io::{fetch::MirrorLists, read::{read_formulas, tmp_path}}, package::package::PackageCache, stage::{link, probe, resolve, unpack, verify}, ui::{event::ItemEvent, with_progess_bar, with_progess_multibar}};
+use std::collections::{HashMap, HashSet};
+
+use core_lib::{db, io::{fetch::MirrorLists, read::{read_formulas, tmp_path}}, package::package::{InstallReason, InstalledPackage, InstalledPackageRecord, PackageCache}, stage::{link, probe, resolve, unpack, verify}, ui::{event::ItemEvent, with_progess_bar, with_progess_multibar}};
 
 use crate::{command::PbStyle, config::Config, ACTIVE_PB};
 
@@ -78,5 +80,29 @@ pub async fn run(config: &Config, mirrors: &MirrorLists, query: QueryArgs) -> Re
     (),
   ).await.unwrap();
   linked.iter().for_each(|i| info!(message="linked", name=%i.name, version=%i.version));
+
+  let direct_names = resolved.names.iter().cloned().collect::<HashSet<_>>();
+  let package_index = resolved.packages.iter().map(|pkg| (pkg.name.as_str(), pkg)).collect::<HashMap<_, _>>();
+  for pkg in &linked {
+    let meta = package_index.get(pkg.name.as_str()).unwrap();
+    let reason = if direct_names.contains(&pkg.name) {
+      InstallReason::Explicit
+    } else {
+      InstallReason::Dependency
+    };
+    db::write_installed(&config.base.db, &InstalledPackage {
+      record: InstalledPackageRecord {
+        name: pkg.name.clone(),
+        version: pkg.version.clone(),
+        desc: meta.desc.clone(),
+        license: meta.license.clone(),
+        deps: meta.deps.clone(),
+        reason,
+        install_date: db::now_unix(),
+        dest: pkg.dest.clone(),
+      },
+      files: pkg.files.clone(),
+    }).unwrap();
+  }
   Ok(())
 }

@@ -4,6 +4,7 @@ extern crate tracing;
 pub mod error;
 pub mod ui;
 
+pub mod db;
 pub mod package;
 pub mod stage;
 pub mod io;

@@ -127,4 +127,30 @@ pub struct PackageLinked {
   pub name: String,
   pub dest: PathBuf,
   pub version: String,
+  pub files: Vec<String>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum InstallReason {
+  Explicit,
+  Dependency,
+}
+
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct InstalledPackageRecord {
+  pub name: String,
+  pub version: String,
+  pub desc: String,
+  pub license: Option<String>,
+  pub deps: Vec<String>,
+  pub reason: InstallReason,
+  pub install_date: u64,
+  pub dest: PathBuf,
+}
+
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct InstalledPackage {
+  pub record: InstalledPackageRecord,
+  pub files: Vec<String>,
 }

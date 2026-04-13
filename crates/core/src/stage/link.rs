@@ -118,11 +118,7 @@ pub fn list_dir<P: AsRef<Path>, Q: AsRef<str>>(base: P, path: Q, stretegy: Strat
   Ok(result)
 }
 
-#[tracing::instrument(level = "debug", skip(prefix, opt_path, tracker), fields(prefix = %prefix.as_ref().display(), opt_path = %opt_path.as_ref().display()))]
-pub async fn step<P: AsRef<Path>, Q: AsRef<Path>>(prefix: P, opt_path: Q, tracker: impl EventListener<ItemEvent>) -> Result<()> {
-  // TODO: generate list of link and check conflict before unpack
-  let opt_path = opt_path.as_ref();
-  let prefix = prefix.as_ref().canonicalize().when(("step.prefix", &prefix.as_ref()))?;
+fn collect_link_targets(opt_path: &Path) -> Result<Vec<String>> {
   let mut to_link = Vec::new();
   to_link.extend(list_dir(opt_path, "bin", Strategy::File)?);
   to_link.extend(list_dir(opt_path, "lib/pkgconfig", Strategy::Recursively)?);
@@ -131,6 +127,15 @@ pub async fn step<P: AsRef<Path>, Q: AsRef<Path>>(prefix: P, opt_path: Q, tracke
   to_link.extend(list_dir(opt_path, "lib", Strategy::Child)?);
   to_link = to_link.into_iter().filter(|i| !(i == "lib/pkgconfig" || i == "lib/cmake" || i == "lib/dtrace")).collect();
   to_link.extend(list_dir(opt_path, "include", Strategy::Child)?);
+  Ok(to_link)
+}
+
+#[tracing::instrument(level = "debug", skip(prefix, opt_path, tracker), fields(prefix = %prefix.as_ref().display(), opt_path = %opt_path.as_ref().display()))]
+pub async fn step<P: AsRef<Path>, Q: AsRef<Path>>(prefix: P, opt_path: Q, tracker: impl EventListener<ItemEvent>) -> Result<()> {
+  // TODO: generate list of link and check conflict before unpack
+  let opt_path = opt_path.as_ref();
+  let prefix = prefix.as_ref().canonicalize().when(("step.prefix", &prefix.as_ref()))?;
+  let to_link = collect_link_targets(opt_path)?;
   tracker.on_event(ItemEvent::Init { max: to_link.len() });
   for (i, file) in to_link.into_iter().enumerate() {
     info!(file, "linking");
@@ -162,6 +167,8 @@ pub async fn exec<'a, P: AsRef<Path>, I: IntoIterator<Item = &'a PackageInstalle
   let mut result = Vec::new();
   for (i, pkg) in pkgs.into_iter().enumerate() {
     tracker.on_event(ItemEvent::Message { name: format!("linking {}", pkg.name) });
+    let mut files = vec![format!("opt/{}", pkg.name)];
+    files.extend(collect_link_targets(&pkg.dest)?);
     symlink_dir(&pkg.dest, opt_dir.join(&pkg.name), true).ok();
     tracker.on_event(ItemEvent::Progress { current: i, max: None });
     step(prefix, &pkg.dest, ()).await?;
@@ -169,6 +176,7 @@ pub async fn exec<'a, P: AsRef<Path>, I: IntoIterator<Item = &'a PackageInstalle
       name: pkg.name.clone(),
       dest: pkg.dest.clone(),
       version: pkg.version.clone(),
+      files,
     })
   }
   tracker.on_event(ItemEvent::Message { name: "link finished".to_string() });
