@@ -6,7 +6,7 @@ file = ".pacbrew/cache/pacbrew/log/pacbrew.log"
 cache = ".pacbrew/cache/pacbrew"
 db = ".pacbrew/cache/pacbrew/db"
 prefix = ".pacbrew"
-arch = "arm64_sonoma"
+arch = "arm64_sequoia"
 
 [[mirror_list]]
 api_url = "https://formulae.brew.sh/api/formula.json"

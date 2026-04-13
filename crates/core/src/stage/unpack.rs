@@ -8,7 +8,12 @@ pub async fn step<P: AsRef<Path>, Q: AsRef<Path>>(pattern: &RelocationPattern, c
   let relocates = Arc::new(Mutex::new(Vec::new()));
   untar_gz(&cache_pkg, dest_dir, |e: UnpackEvent| {
     if let Some(name) = e.current_entry {
-      match relocate(dest_dir.join(&name), pattern) {
+      let filename = dest_dir.join(&name);
+      // TODO: python@3.13/3.13.3/Frameworks/Python.framework/Versions/3.13/lib/python3.13/test/test_importlib/name
+      if !filename.exists() {
+        return;
+      }
+      match relocate(filename, pattern) {
         Ok(RelocateType::None) => {},
         Ok(ty) => relocates.lock().unwrap().push((name, ty)),
         Err(e) => {
@@ -23,7 +28,7 @@ pub async fn step<P: AsRef<Path>, Q: AsRef<Path>>(pattern: &RelocationPattern, c
   for (name, ty) in &relocates {
     if ty == &RelocateType::None {
       warn!(name=%name.display(), "relocate failed");
-      return Err(std::io::Error::other(format!("relocate {} failed", name.display()))).when(("unpack", cache_pkg.as_ref()))?;
+      // return Err(std::io::Error::other(format!("relocate {} failed", name.display()))).when(("unpack", cache_pkg.as_ref()))?;
     }
   }
   Ok(relocates)

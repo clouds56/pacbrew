@@ -5,7 +5,7 @@ with open("../formula.json") as f:
   data = json.load(f)
 
 # %%
-def get_bottle(item, arch=['arm64_sonoma', 'arm64_ventura', 'all']):
+def get_bottle(item, arch=['arm64_sequoia', 'arm64_sonoma', 'arm64_ventura', 'all']):
   files = item['bottle']['stable']['files']
   for i in arch:
     if i in files:

@@ -17,7 +17,7 @@ mod tests {
   pub static CACHE_PATH: &str = "cache/download";
   pub static PREFIX_PATH: &str = "cache/root";
   pub static CELLAR_PATH: &str = "cache/root/_opt";
-  pub static ARCH: &str = "arm64_sonoma";
+  pub static ARCH: &str = "arm64_sequoia";
   pub static MIRROR: (MirrorType, &str) = (MirrorType::Bottle, "https://mirrors.ustc.edu.cn/homebrew-bottles");
 
   pub fn get_mirrors() -> MirrorLists {
