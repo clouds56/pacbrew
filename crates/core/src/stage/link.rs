@@ -176,8 +176,7 @@ pub async fn exec<'a, P: AsRef<Path>, I: IntoIterator<Item = &'a PackageInstalle
   Ok(result)
 }
 
-#[cfg(test)]
-fn guess_installed(path: &Path) -> Option<PackageInstalled> {
+pub fn guess_installed(path: &Path) -> Option<PackageInstalled> {
   let mut versions = std::fs::read_dir(path).ok()?
     .filter_map(|v| v.ok())
     .filter_map(|v| Some((v.metadata().ok()?.created().ok()?, v)))
@@ -192,21 +191,34 @@ fn guess_installed(path: &Path) -> Option<PackageInstalled> {
   })
 }
 
+pub fn list_installed(cellar_dir: &Path) -> Result<Vec<PackageInstalled>> {
+  if !cellar_dir.exists() {
+    return Ok(Vec::new());
+  }
+
+  let mut pkgs = Vec::new();
+  for entry in std::fs::read_dir(cellar_dir).when(("list_installed.read_dir", cellar_dir))? {
+    let entry = entry.when(("list_installed.read_dir_entry", cellar_dir))?;
+    let path = entry.path();
+    if !entry.file_type().when(("list_installed.file_type", &path))?.is_dir() {
+      continue;
+    }
+    if let Some(pkg) = guess_installed(&path) {
+      pkgs.push(pkg);
+    }
+  }
+
+  pkgs.sort_by(|left, right| left.name.cmp(&right.name));
+  Ok(pkgs)
+}
+
 #[tokio::test]
 async fn test_link() {
   use crate::tests::*;
   init_logger(None);
 
-  let mut pkgs = Vec::new();
   let cellar_dir = Path::new(CELLAR_PATH);
-  for i in std::fs::read_dir(cellar_dir).unwrap() {
-    let i = i.unwrap();
-    let name = i.file_name().to_string_lossy().to_string();
-    if let Some(pkg) = guess_installed(&cellar_dir.join(name)) {
-      // debug!(?pkg);
-      pkgs.push(pkg)
-    }
-  }
+  let pkgs = list_installed(cellar_dir).unwrap();
 
   let result = exec(PREFIX_PATH, &pkgs, ()).await.unwrap();
   assert_eq!(result.len(), pkgs.len())

@@ -20,6 +20,7 @@ pub enum Command {
   Update,
   Download(command::QueryArgs),
   Install(command::QueryArgs),
+  List,
 }
 
 lazy_static::lazy_static! {
@@ -78,5 +79,6 @@ async fn main() {
         write!(file, "install {}\n", query.names.join(",")).unwrap();
       }
     },
+    Command::List => command::list::run(&config).unwrap(),
   }
 }
