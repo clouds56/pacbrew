@@ -227,8 +227,12 @@ pub async fn run(config: &Config, mirrors: &MirrorLists, query: QueryArgs) -> Re
   linked.iter().for_each(|i| info!(message="linked", name=%i.name, version=%i.version));
 
   let package_index = resolved.packages.iter().map(|pkg| (pkg.name.as_str(), pkg)).collect::<HashMap<_, _>>();
+  let unpacked_index = unpacked.iter().map(|pkg| (pkg.name.as_str(), pkg)).collect::<HashMap<_, _>>();
   for pkg in &linked {
     let meta = package_index.get(pkg.name.as_str()).unwrap();
+    let reloc = unpacked_index.get(pkg.name.as_str())
+      .map(|pkg| pkg.reloc.clone())
+      .unwrap_or_default();
     let reason = installed.get(&pkg.name)
       .map(|installed| installed.reason)
       .unwrap_or_else(|| {
@@ -250,6 +254,7 @@ pub async fn run(config: &Config, mirrors: &MirrorLists, query: QueryArgs) -> Re
         dest: pkg.dest.clone(),
       },
       files: pkg.files.clone(),
+      reloc,
     })?;
   }
   Ok(true)

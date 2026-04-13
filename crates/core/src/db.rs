@@ -1,10 +1,11 @@
 use std::{collections::HashMap, path::{Path, PathBuf}, time::{SystemTime, UNIX_EPOCH}};
 
-use crate::{error::{ErrorExt, IoErrorExt, Result}, io::read::{read_toml, write_to_file, write_toml}, package::package::{InstalledPackage, InstalledPackageRecord}};
+use crate::{error::{ErrorExt, IoErrorExt, Result}, io::{read::{read_toml, write_to_file, write_toml}, relocate::RelocateType}, package::package::{InstalledPackage, InstalledPackageRecord}};
 
 const LOCAL_DIR: &str = "local";
 const RECORD_FILE: &str = "desc.toml";
 const FILES_FILE: &str = "files.txt";
+const RELOCATION_FILE: &str = "reloc.txt";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum InstalledVersionStatus {
@@ -27,6 +28,31 @@ fn files_path(root: &Path, name: &str, version: &str) -> PathBuf {
 
 fn record_path(root: &Path, name: &str, version: &str) -> PathBuf {
   package_dir(root, name, version).join(RECORD_FILE)
+}
+
+fn relocation_path(root: &Path, name: &str, version: &str) -> PathBuf {
+  package_dir(root, name, version).join(RELOCATION_FILE)
+}
+
+fn relocation_line(path: &Path, ty: RelocateType) -> Option<String> {
+  match ty {
+    RelocateType::Text => Some(format!("text:{}", path.display())),
+    RelocateType::MachO => Some(format!("binary:{}", path.display())),
+    RelocateType::None => None,
+  }
+}
+
+fn parse_relocation_line(line: &str) -> Option<(PathBuf, RelocateType)> {
+  let (prefix, path) = line.split_once(':')?;
+  let ty = match prefix {
+    "text" => RelocateType::Text,
+    "binary" => RelocateType::MachO,
+    _ => return None,
+  };
+  if path.is_empty() {
+    return None;
+  }
+  Some((PathBuf::from(path), ty))
 }
 
 pub fn now_unix() -> u64 {
@@ -59,6 +85,19 @@ pub fn write_installed(root: &Path, package: &InstalledPackage) -> Result<()> {
     format!("{}\n", package.files.join("\n"))
   };
   write_to_file(files_path(root, &package.record.name, &package.record.version), files.as_bytes(), true)?;
+  let reloc = if package.reloc.is_empty() {
+    String::new()
+  } else {
+    let lines = package.reloc.iter()
+      .filter_map(|(path, ty)| relocation_line(path, *ty))
+      .collect::<Vec<_>>();
+    if lines.is_empty() {
+      String::new()
+    } else {
+      format!("{}\n", lines.join("\n"))
+    }
+  };
+  write_to_file(relocation_path(root, &package.record.name, &package.record.version), reloc.as_bytes(), true)?;
   Ok(())
 }
 
@@ -124,7 +163,14 @@ pub fn read_installed(root: &Path, name: &str) -> Result<Option<InstalledPackage
     let files = std::fs::read_to_string(path.join(FILES_FILE))
       .map(|content| content.lines().map(|line| line.to_string()).collect())
       .unwrap_or_default();
-    return Ok(Some(InstalledPackage { record, files }));
+    let reloc = std::fs::read_to_string(path.join(RELOCATION_FILE))
+      .map(|content| {
+        content.lines()
+          .filter_map(parse_relocation_line)
+          .collect()
+      })
+      .unwrap_or_default();
+    return Ok(Some(InstalledPackage { record, files, reloc }));
   }
 
   Ok(None)
@@ -146,6 +192,7 @@ mod tests {
   use std::path::PathBuf;
   use std::time::{SystemTime, UNIX_EPOCH};
 
+  use crate::io::relocate::RelocateType;
   use crate::package::package::{InstallReason, InstalledPackage, InstalledPackageRecord};
 
   fn temp_root() -> PathBuf {
@@ -173,6 +220,10 @@ mod tests {
         dest: PathBuf::from("/tmp/wget"),
       },
       files: vec!["bin/wget".to_string(), "opt/wget".to_string()],
+      reloc: std::collections::BTreeMap::from([
+        (PathBuf::from("bin/wget"), RelocateType::Text),
+        (PathBuf::from("lib/libwget.dylib"), RelocateType::MachO),
+      ]),
     };
 
     write_installed(&root, &package).unwrap();
@@ -183,6 +234,7 @@ mod tests {
     let loaded = read_installed(&root, "wget").unwrap().unwrap();
     assert_eq!(loaded.record.version, "1.0.0");
     assert_eq!(loaded.files, package.files);
+    assert_eq!(loaded.reloc, package.reloc);
 
     let removed = remove_installed(&root, "wget").unwrap().unwrap();
     assert_eq!(removed.record.name, "wget");

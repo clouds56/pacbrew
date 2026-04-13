@@ -93,6 +93,7 @@ pub fn run(config: &Config, query: QueryArgs) -> Result<()> {
         dest: pkg.dest.clone(),
       },
       files: link::owned_files(&pkg.name, &pkg.dest).unwrap_or_else(|_| vec![format!("opt/{}", pkg.name)]),
+      reloc: std::collections::BTreeMap::new(),
     })?;
     imported += 1;
   }

@@ -153,4 +153,5 @@ pub struct InstalledPackageRecord {
 pub struct InstalledPackage {
   pub record: InstalledPackageRecord,
   pub files: Vec<String>,
+  pub reloc: BTreeMap<PathBuf, RelocateType>,
 }
