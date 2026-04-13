@@ -21,6 +21,7 @@ pub enum Command {
   Download(command::QueryArgs),
   Import(command::QueryArgs),
   Install(command::QueryArgs),
+  Remove(command::RemoveArgs),
   List(command::list::ListArgs),
   Upgrade,
 }
@@ -84,6 +85,7 @@ async fn main() {
         }
       }
     },
+    Command::Remove(args) => command::remove::run(&config, args).unwrap(),
     Command::List(args) => command::list::run(&config, args).unwrap(),
     Command::Upgrade => command::upgrade::run(&config, &mirrors).await.unwrap(),
   }

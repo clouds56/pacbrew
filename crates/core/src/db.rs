@@ -1,6 +1,6 @@
 use std::{collections::HashMap, path::{Path, PathBuf}, time::{SystemTime, UNIX_EPOCH}};
 
-use crate::{error::{ErrorExt, Result}, io::read::{read_toml, write_to_file, write_toml}, package::package::{InstalledPackage, InstalledPackageRecord}};
+use crate::{error::{ErrorExt, IoErrorExt, Result}, io::read::{read_toml, write_to_file, write_toml}, package::package::{InstalledPackage, InstalledPackageRecord}};
 
 const LOCAL_DIR: &str = "local";
 const RECORD_FILE: &str = "desc.toml";
@@ -130,6 +130,17 @@ pub fn read_installed(root: &Path, name: &str) -> Result<Option<InstalledPackage
   Ok(None)
 }
 
+pub fn remove_installed(root: &Path, name: &str) -> Result<Option<InstalledPackage>> {
+  let Some(installed) = read_installed(root, name)? else {
+    return Ok(None);
+  };
+  let pkg_dir = package_dir(root, &installed.record.name, &installed.record.version);
+  std::fs::remove_dir_all(&pkg_dir)
+    .ok_not_found_none()
+    .when(("remove_dir_all", &pkg_dir))?;
+  Ok(Some(installed))
+}
+
 #[cfg(test)]
 mod tests {
   use std::path::PathBuf;
@@ -145,7 +156,7 @@ mod tests {
     ))
   }
 
-  use super::{installed_index, list_installed, read_installed, version_status, write_installed, InstalledVersionStatus};
+  use super::{installed_index, list_installed, read_installed, remove_installed, version_status, write_installed, InstalledVersionStatus};
 
   #[test]
   fn test_db_roundtrip() {
@@ -173,8 +184,12 @@ mod tests {
     assert_eq!(loaded.record.version, "1.0.0");
     assert_eq!(loaded.files, package.files);
 
+    let removed = remove_installed(&root, "wget").unwrap().unwrap();
+    assert_eq!(removed.record.name, "wget");
+    assert!(read_installed(&root, "wget").unwrap().is_none());
+
     let index = installed_index(&root).unwrap();
-    assert_eq!(index.get("wget").unwrap().version, "1.0.0");
+    assert!(!index.contains_key("wget"));
 
     assert_eq!(version_status(None, "1.0.0"), InstalledVersionStatus::Missing);
     assert_eq!(version_status(Some("1.0.0"), "1.0.0"), InstalledVersionStatus::Satisfied);

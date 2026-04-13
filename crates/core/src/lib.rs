@@ -39,7 +39,7 @@ mod tests {
       .with_env_filter(tracing_subscriber::EnvFilter::from_str(env_filter.unwrap_or("info,pacbrew_core=debug")).unwrap())
       .with_span_events(FmtSpan::NEW | FmtSpan::CLOSE)
       .with_writer(move || PbWriter::new(active_pb.read().unwrap().clone(), std::io::stderr()))
-      .init();
+      .try_init();
     result
   }
 }

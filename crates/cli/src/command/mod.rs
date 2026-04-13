@@ -5,10 +5,19 @@ pub mod download;
 pub mod import;
 pub mod install;
 pub mod list;
+pub mod remove;
 pub mod upgrade;
 
 #[derive(Debug, Clone, clap::Args)]
 pub struct QueryArgs {
+  pub names: Vec<String>,
+}
+
+#[derive(Debug, Clone, clap::Args)]
+pub struct RemoveArgs {
+  #[arg(long)]
+  pub force: bool,
+
   pub names: Vec<String>,
 }
 
