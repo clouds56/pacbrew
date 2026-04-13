@@ -21,6 +21,7 @@ pub enum Command {
   Download(command::QueryArgs),
   Import(command::QueryArgs),
   Install(command::QueryArgs),
+  Doctor,
   Remove(command::RemoveArgs),
   List(command::list::ListArgs),
   Tree(command::tree::TreeArgs),
@@ -86,6 +87,7 @@ async fn main() {
         }
       }
     },
+    Command::Doctor => command::doctor::run(&config).unwrap(),
     Command::Remove(args) => command::remove::run(&config, args).unwrap(),
     Command::List(args) => command::list::run(&config, args).unwrap(),
     Command::Tree(args) => command::tree::run(&config, args).unwrap(),

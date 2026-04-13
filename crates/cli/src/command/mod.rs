@@ -8,6 +8,7 @@ pub mod list;
 pub mod remove;
 pub mod tree;
 pub mod upgrade;
+pub mod doctor;
 
 #[derive(Debug, Clone, clap::Args)]
 pub struct QueryArgs {
