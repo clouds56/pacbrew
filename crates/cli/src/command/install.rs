@@ -85,11 +85,15 @@ pub async fn run(config: &Config, mirrors: &MirrorLists, query: QueryArgs) -> Re
   let package_index = resolved.packages.iter().map(|pkg| (pkg.name.as_str(), pkg)).collect::<HashMap<_, _>>();
   for pkg in &linked {
     let meta = package_index.get(pkg.name.as_str()).unwrap();
-    let reason = if direct_names.contains(&pkg.name) {
-      InstallReason::Explicit
-    } else {
-      InstallReason::Dependency
-    };
+    let reason = db::read_installed(&config.base.db, &pkg.name)?
+      .map(|installed| installed.record.reason)
+      .unwrap_or_else(|| {
+        if direct_names.contains(&pkg.name) {
+          InstallReason::Explicit
+        } else {
+          InstallReason::Dependency
+        }
+      });
     db::write_installed(&config.base.db, &InstalledPackage {
       record: InstalledPackageRecord {
         name: pkg.name.clone(),
@@ -102,7 +106,7 @@ pub async fn run(config: &Config, mirrors: &MirrorLists, query: QueryArgs) -> Re
         dest: pkg.dest.clone(),
       },
       files: pkg.files.clone(),
-    }).unwrap();
+    })?;
   }
   Ok(())
 }

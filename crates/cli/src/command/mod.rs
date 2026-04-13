@@ -5,6 +5,7 @@ pub mod download;
 pub mod import;
 pub mod install;
 pub mod list;
+pub mod upgrade;
 
 #[derive(Debug, Clone, clap::Args)]
 pub struct QueryArgs {

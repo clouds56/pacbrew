@@ -22,6 +22,7 @@ pub enum Command {
   Import(command::QueryArgs),
   Install(command::QueryArgs),
   List(command::list::ListArgs),
+  Upgrade,
 }
 
 lazy_static::lazy_static! {
@@ -82,5 +83,6 @@ async fn main() {
       }
     },
     Command::List(args) => command::list::run(&config, args).unwrap(),
+    Command::Upgrade => command::upgrade::run(&config, &mirrors).await.unwrap(),
   }
 }
