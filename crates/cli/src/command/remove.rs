@@ -58,7 +58,13 @@ pub fn run(config: &Config, args: RemoveArgs) -> Result<()> {
   }
 
   for name in &plan.order {
-    uninstall_installed_by_name(&config.base.db, &config.base.prefix, name)?;
+    let Some(pkg) = db::remove_installed(&config.base.db, name)? else {
+      continue;
+    };
+    unlink_owned_files(&config.base.prefix, &pkg.files)?;
+    std::fs::remove_dir_all(&pkg.record.dest)
+      .ok_not_found_none()
+      .when(("remove_dir_all", &pkg.record.dest))?;
   }
 
   Ok(())
@@ -132,7 +138,7 @@ fn plan_removals(
   Ok(RemovePlan { order, reasons })
 }
 
-pub(crate) fn build_reverse_dependencies(
+fn build_reverse_dependencies(
   installed: &HashMap<String, InstalledPackageRecord>,
 ) -> HashMap<String, Vec<String>> {
   let mut reverse = installed
@@ -151,7 +157,7 @@ pub(crate) fn build_reverse_dependencies(
   reverse
 }
 
-pub(crate) fn has_remaining_dependents(
+fn has_remaining_dependents(
   target: &str,
   reverse: &HashMap<String, Vec<String>>,
   removal_set: &HashSet<String>,
@@ -163,7 +169,7 @@ pub(crate) fn has_remaining_dependents(
     .any(|dependent| !removal_set.contains(dependent))
 }
 
-pub(crate) fn removal_order(
+fn removal_order(
   installed: &HashMap<String, InstalledPackageRecord>,
   removal_set: &HashSet<String>,
 ) -> Vec<String> {
@@ -217,7 +223,7 @@ pub(crate) fn removal_order(
   ordered
 }
 
-pub(crate) fn unlink_owned_files(prefix: &Path, files: &[String]) -> core_lib::error::Result<()> {
+fn unlink_owned_files(prefix: &Path, files: &[String]) -> core_lib::error::Result<()> {
   for rel in files {
     let path = prefix.join(rel);
     let metadata = match std::fs::symlink_metadata(&path).ok_not_found() {
@@ -242,17 +248,6 @@ pub(crate) fn unlink_owned_files(prefix: &Path, files: &[String]) -> core_lib::e
     }
   }
   Ok(())
-}
-
-pub(crate) fn uninstall_installed_by_name(db_path: &Path, prefix: &Path, name: &str) -> Result<bool> {
-  let Some(pkg) = db::remove_installed(db_path, name)? else {
-    return Ok(false);
-  };
-  unlink_owned_files(prefix, &pkg.files)?;
-  std::fs::remove_dir_all(&pkg.record.dest)
-    .ok_not_found_none()
-    .when(("remove_dir_all", &pkg.record.dest))?;
-  Ok(true)
 }
 
 fn cleanup_empty_parents(prefix: &Path, path: &Path) -> core_lib::error::Result<()> {

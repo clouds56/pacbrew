@@ -30,11 +30,6 @@ pub async fn run(config: &Config, mirrors: &MirrorLists) -> Result<()> {
   }
 
   eprintln!("upgrading {} package(s): {}", outdated.len(), outdated.join(", "));
-  super::install::run_with_mode(
-    config,
-    mirrors,
-    QueryArgs { names: outdated },
-    super::install::InstallMode::Upgrade,
-  ).await?;
+  super::install::run(config, mirrors, QueryArgs { names: outdated }).await?;
   Ok(())
 }

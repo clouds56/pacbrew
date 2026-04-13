@@ -6,13 +6,7 @@ use core_lib::{db::{self, InstalledVersionStatus}, io::{fetch::MirrorLists, read
 
 use crate::{command::PbStyle, config::Config, ACTIVE_PB};
 
-use super::{remove, QueryArgs};
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum InstallMode {
-  Install,
-  Upgrade,
-}
+use super::QueryArgs;
 
 #[derive(Debug, Default)]
 struct InstallPlan {
@@ -56,7 +50,6 @@ fn plan_packages(
   resolved: &[PackageVersion],
   requested_names: &HashSet<String>,
   installed: &HashMap<String, InstalledPackageRecord>,
-  mode: InstallMode,
 ) -> InstallPlan {
   let mut plan = InstallPlan::default();
   let mut seen = HashSet::new();
@@ -66,19 +59,7 @@ fn plan_packages(
       continue;
     }
 
-    let requested_by_name = requested_names.contains(&package.name);
-    let is_requested = match mode {
-      InstallMode::Install => requested_by_name,
-      InstallMode::Upgrade => {
-        if !requested_by_name {
-          false
-        } else {
-          installed.get(&package.name)
-            .map(|record| record.reason != InstallReason::Dependency)
-            .unwrap_or(true)
-        }
-      }
-    };
+    let is_requested = requested_names.contains(&package.name);
     let version = package.version_full();
     let installed_version = installed.get(&package.name).map(|record| record.version.clone());
     let status = db::version_status(installed_version.as_deref(), &version);
@@ -124,22 +105,6 @@ fn review_plan<W: Write>(writer: &mut W, plan: &InstallPlan) -> std::io::Result<
   Ok(())
 }
 
-fn decide_install_reason(
-  mode: InstallMode,
-  requested: bool,
-  installed_reason: Option<InstallReason>,
-) -> InstallReason {
-  match installed_reason {
-    Some(reason)
-      if mode == InstallMode::Install
-        && requested
-        && reason == InstallReason::Dependency => InstallReason::Explicit,
-    Some(reason) => reason,
-    None if requested => InstallReason::Explicit,
-    None => InstallReason::Dependency,
-  }
-}
-
 fn prompt_yes_no<R: BufRead, W: Write>(reader: &mut R, writer: &mut W, prompt: &str) -> std::io::Result<bool> {
   loop {
     write!(writer, "{prompt}")?;
@@ -161,11 +126,6 @@ fn prompt_yes_no<R: BufRead, W: Write>(reader: &mut R, writer: &mut W, prompt: &
 
 #[tracing::instrument(level = "debug", skip_all, fields(query = ?query.names, arch = %config.base.arch))]
 pub async fn run(config: &Config, mirrors: &MirrorLists, query: QueryArgs) -> Result<bool> {
-  run_with_mode(config, mirrors, query, InstallMode::Install).await
-}
-
-#[tracing::instrument(level = "debug", skip_all, fields(query = ?query.names, arch = %config.base.arch, mode = ?mode))]
-pub async fn run_with_mode(config: &Config, mirrors: &MirrorLists, query: QueryArgs, mode: InstallMode) -> Result<bool> {
   let formulas = read_formulas(config.base.formula_json())?;
   let requested_names = requested_package_names(&formulas, &query.names)?;
   let installed = db::installed_index(&config.base.db)?;
@@ -177,7 +137,7 @@ pub async fn run_with_mode(config: &Config, mirrors: &MirrorLists, query: QueryA
     (),
   ).await.unwrap();
 
-  let plan = plan_packages(&resolved.packages, &requested_names, &installed, mode);
+  let plan = plan_packages(&resolved.packages, &requested_names, &installed);
   if !plan.skipped_dependencies.is_empty() {
     info!(message="skip satisfied dependencies", skipped=plan.skipped_dependencies.join(","));
   }
@@ -269,11 +229,15 @@ pub async fn run_with_mode(config: &Config, mirrors: &MirrorLists, query: QueryA
   let package_index = resolved.packages.iter().map(|pkg| (pkg.name.as_str(), pkg)).collect::<HashMap<_, _>>();
   for pkg in &linked {
     let meta = package_index.get(pkg.name.as_str()).unwrap();
-    let reason = decide_install_reason(
-      mode,
-      requested_names.contains(&pkg.name),
-      installed.get(&pkg.name).map(|record| record.reason),
-    );
+    let reason = installed.get(&pkg.name)
+      .map(|installed| installed.reason)
+      .unwrap_or_else(|| {
+        if requested_names.contains(&pkg.name) {
+          InstallReason::Explicit
+        } else {
+          InstallReason::Dependency
+        }
+      });
     db::write_installed(&config.base.db, &InstalledPackage {
       record: InstalledPackageRecord {
         name: pkg.name.clone(),
@@ -288,74 +252,7 @@ pub async fn run_with_mode(config: &Config, mirrors: &MirrorLists, query: QueryA
       files: pkg.files.clone(),
     })?;
   }
-
-  if mode == InstallMode::Upgrade {
-    prune_unused_dependencies_for_upgrade(config, &installed, &package_index, &linked.iter().map(|pkg| pkg.name.as_str()).collect())?;
-  }
-
   Ok(true)
-}
-
-fn prune_unused_dependencies_for_upgrade(
-  config: &Config,
-  installed_before: &HashMap<String, InstalledPackageRecord>,
-  package_index: &HashMap<&str, &PackageVersion>,
-  updated_names: &HashSet<&str>,
-) -> Result<()> {
-  let mut candidates = HashSet::new();
-  for name in updated_names {
-    let Some(old_record) = installed_before.get(*name) else {
-      continue;
-    };
-    let old_deps = old_record.deps.iter().cloned().collect::<HashSet<_>>();
-    let new_deps = package_index
-      .get(name)
-      .map(|pkg| pkg.deps.iter().cloned().collect::<HashSet<_>>())
-      .unwrap_or_default();
-    candidates.extend(old_deps.difference(&new_deps).cloned());
-  }
-
-  if candidates.is_empty() {
-    return Ok(());
-  }
-
-  let installed_after = db::installed_index(&config.base.db)?;
-  let reverse = remove::build_reverse_dependencies(&installed_after);
-  let mut removal_set = HashSet::new();
-
-  loop {
-    let mut changed = false;
-    for name in &candidates {
-      if removal_set.contains(name) {
-        continue;
-      }
-      let Some(record) = installed_after.get(name) else {
-        continue;
-      };
-      if record.reason != InstallReason::Dependency {
-        continue;
-      }
-      if remove::has_remaining_dependents(name, &reverse, &removal_set) {
-        continue;
-      }
-      removal_set.insert(name.clone());
-      changed = true;
-    }
-    if !changed {
-      break;
-    }
-  }
-
-  if removal_set.is_empty() {
-    return Ok(());
-  }
-
-  let order = remove::removal_order(&installed_after, &removal_set);
-  for name in order {
-    remove::uninstall_installed_by_name(&config.base.db, &config.base.prefix, &name)?;
-  }
-
-  Ok(())
 }
 
 #[cfg(test)]
@@ -366,7 +263,7 @@ mod tests {
 
   use std::io::Cursor;
 
-  use super::{decide_install_reason, plan_packages, prompt_yes_no, review_plan, InstallMode, PlanAction};
+  use super::{plan_packages, prompt_yes_no, review_plan, PlanAction};
 
   fn package(name: &str, version: &str, deps: &[&str]) -> PackageVersion {
     PackageVersion {
@@ -406,7 +303,7 @@ mod tests {
       ("bar".to_string(), installed("bar", "2.0.0")),
     ]);
 
-    let plan = plan_packages(&resolved, &requested, &installed, InstallMode::Install);
+    let plan = plan_packages(&resolved, &requested, &installed);
 
     assert_eq!(plan.packages.iter().map(|pkg| pkg.package.name.as_str()).collect::<Vec<_>>(), vec!["foo"]);
     assert_eq!(plan.packages[0].action, PlanAction::Reinstall);
@@ -424,7 +321,7 @@ mod tests {
       ("bar".to_string(), installed("bar", "1.5.0")),
     ]);
 
-    let plan = plan_packages(&resolved, &requested, &installed, InstallMode::Install);
+    let plan = plan_packages(&resolved, &requested, &installed);
 
     assert_eq!(plan.packages.iter().map(|pkg| pkg.package.name.as_str()).collect::<Vec<_>>(), vec!["foo", "bar"]);
     assert_eq!(plan.packages[1].action, PlanAction::Upgrade);
@@ -441,7 +338,7 @@ mod tests {
     ];
     let requested = HashSet::from(["foo".to_string(), "bar".to_string()]);
 
-    let plan = plan_packages(&resolved, &requested, &HashMap::new(), InstallMode::Install);
+    let plan = plan_packages(&resolved, &requested, &HashMap::new());
 
     assert_eq!(plan.packages.iter().map(|pkg| pkg.package.name.as_str()).collect::<Vec<_>>(), vec!["foo", "bar", "shared"]);
   }
@@ -477,7 +374,7 @@ mod tests {
     let installed = HashMap::from([
       ("foo".to_string(), installed("foo", "1.0.0")),
     ]);
-    let plan = plan_packages(&resolved, &requested, &installed, InstallMode::Install);
+    let plan = plan_packages(&resolved, &requested, &installed);
     let mut output = Vec::new();
 
     review_plan(&mut output, &plan).unwrap();
@@ -485,50 +382,5 @@ mod tests {
     let output = String::from_utf8(output).unwrap();
     assert!(output.contains("reinstall root foo 1.0.0"));
     assert!(output.contains("install   dep bar 2.0.0"));
-  }
-
-  #[test]
-  fn upgrade_review_marks_requested_dependency_as_dep() {
-    let resolved = vec![
-      package("foo", "1.1.0", &["bar"]),
-      package("bar", "2.1.0", &[]),
-    ];
-    let requested = HashSet::from(["foo".to_string(), "bar".to_string()]);
-    let installed = HashMap::from([
-      ("foo".to_string(), InstalledPackageRecord {
-        reason: InstallReason::Explicit,
-        ..installed("foo", "1.0.0")
-      }),
-      ("bar".to_string(), installed("bar", "2.0.0")),
-    ]);
-
-    let plan = plan_packages(&resolved, &requested, &installed, InstallMode::Upgrade);
-
-    let foo = plan.packages.iter().find(|pkg| pkg.package.name == "foo").unwrap();
-    let bar = plan.packages.iter().find(|pkg| pkg.package.name == "bar").unwrap();
-    assert!(foo.requested);
-    assert!(!bar.requested);
-  }
-
-  #[test]
-  fn direct_install_promotes_dependency_to_explicit() {
-    let reason = decide_install_reason(
-      InstallMode::Install,
-      true,
-      Some(InstallReason::Dependency),
-    );
-
-    assert_eq!(reason, InstallReason::Explicit);
-  }
-
-  #[test]
-  fn upgrade_keeps_existing_dependency_reason() {
-    let reason = decide_install_reason(
-      InstallMode::Upgrade,
-      true,
-      Some(InstallReason::Dependency),
-    );
-
-    assert_eq!(reason, InstallReason::Dependency);
   }
 }
