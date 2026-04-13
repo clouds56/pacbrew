@@ -6,6 +6,7 @@ pub mod import;
 pub mod install;
 pub mod list;
 pub mod remove;
+pub mod tree;
 pub mod upgrade;
 
 #[derive(Debug, Clone, clap::Args)]

@@ -58,13 +58,7 @@ pub fn run(config: &Config, args: RemoveArgs) -> Result<()> {
   }
 
   for name in &plan.order {
-    let Some(pkg) = db::remove_installed(&config.base.db, name)? else {
-      continue;
-    };
-    unlink_owned_files(&config.base.prefix, &pkg.files)?;
-    std::fs::remove_dir_all(&pkg.record.dest)
-      .ok_not_found_none()
-      .when(("remove_dir_all", &pkg.record.dest))?;
+    uninstall_installed_by_name(&config.base.db, &config.base.prefix, name)?;
   }
 
   Ok(())
@@ -138,7 +132,7 @@ fn plan_removals(
   Ok(RemovePlan { order, reasons })
 }
 
-fn build_reverse_dependencies(
+pub(crate) fn build_reverse_dependencies(
   installed: &HashMap<String, InstalledPackageRecord>,
 ) -> HashMap<String, Vec<String>> {
   let mut reverse = installed
@@ -157,7 +151,7 @@ fn build_reverse_dependencies(
   reverse
 }
 
-fn has_remaining_dependents(
+pub(crate) fn has_remaining_dependents(
   target: &str,
   reverse: &HashMap<String, Vec<String>>,
   removal_set: &HashSet<String>,
@@ -169,7 +163,7 @@ fn has_remaining_dependents(
     .any(|dependent| !removal_set.contains(dependent))
 }
 
-fn removal_order(
+pub(crate) fn removal_order(
   installed: &HashMap<String, InstalledPackageRecord>,
   removal_set: &HashSet<String>,
 ) -> Vec<String> {
@@ -223,7 +217,7 @@ fn removal_order(
   ordered
 }
 
-fn unlink_owned_files(prefix: &Path, files: &[String]) -> core_lib::error::Result<()> {
+pub(crate) fn unlink_owned_files(prefix: &Path, files: &[String]) -> core_lib::error::Result<()> {
   for rel in files {
     let path = prefix.join(rel);
     let metadata = match std::fs::symlink_metadata(&path).ok_not_found() {
@@ -248,6 +242,17 @@ fn unlink_owned_files(prefix: &Path, files: &[String]) -> core_lib::error::Resul
     }
   }
   Ok(())
+}
+
+pub(crate) fn uninstall_installed_by_name(db_path: &Path, prefix: &Path, name: &str) -> Result<bool> {
+  let Some(pkg) = db::remove_installed(db_path, name)? else {
+    return Ok(false);
+  };
+  unlink_owned_files(prefix, &pkg.files)?;
+  std::fs::remove_dir_all(&pkg.record.dest)
+    .ok_not_found_none()
+    .when(("remove_dir_all", &pkg.record.dest))?;
+  Ok(true)
 }
 
 fn cleanup_empty_parents(prefix: &Path, path: &Path) -> core_lib::error::Result<()> {
