@@ -21,7 +21,7 @@ pub enum Command {
   Download(command::QueryArgs),
   Import(command::QueryArgs),
   Install(command::QueryArgs),
-  List,
+  List(command::list::ListArgs),
 }
 
 lazy_static::lazy_static! {
@@ -81,6 +81,6 @@ async fn main() {
         write!(file, "install {}\n", query.names.join(",")).unwrap();
       }
     },
-    Command::List => command::list::run(&config).unwrap(),
+    Command::List(args) => command::list::run(&config, args).unwrap(),
   }
 }
